@@ -8,7 +8,7 @@ from pathlib import Path
 # Page configuration
 st.set_page_config(
     page_title="SingN'Seek",
-    page_icon="images/music.png",
+    page_icon="images/logo.png",
     layout="centered"
 )
 
@@ -234,7 +234,7 @@ def simulate_search(query):
         st.session_state.search_state = 'no_results'
 
 # ===== SECTION 1: LOGO AND TITLE =====
-logo_path = "images/music.png"
+logo_path = "images/logo.png"
 if os.path.exists(logo_path):
     col_logo, col_title, col_nav = st.columns([0.6, 1.8, 2.6])
     with col_logo:
