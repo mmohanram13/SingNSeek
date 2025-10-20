@@ -1,2 +1,58 @@
-# Created by venv; see https://docs.python.org/3/library/venv.html
-*
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
+*.pyc
+dist/
+build/
+*.log
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Testing and Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Docker (optional - uncomment if you don't want to track these)
+# Dockerfile
+# docker-compose.yml
+# .dockerignore
+
+# Google Cloud (if deploying to GCP)
+.gcloudignore
+
+# Streamlit
+.streamlit/secrets.toml
