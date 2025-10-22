@@ -6,20 +6,30 @@ import base64
 from pathlib import Path
 import tempfile
 
-# Import utility functions for Elasticsearch and search
-try:
-    import utils
-    UTILS_AVAILABLE = True
-except ImportError:
-    UTILS_AVAILABLE = False
-    st.warning("Utils module not available. Search functionality will be limited.")
-
-# Page configuration
+# Page configuration (must be first Streamlit command)
 st.set_page_config(
     page_title="SingN'Seek",
     page_icon="images/logo.png",
     layout="centered"
 )
+
+# Import utility functions for Elasticsearch and search
+try:
+    import utils
+    UTILS_AVAILABLE = True
+    
+    # Check Elasticsearch connection at startup
+    try:
+        es_client = utils.get_es_client()
+        st.success("✅ Connected to Elasticsearch successfully!")
+    except Exception as e:
+        st.error(f"❌ Failed to connect to Elasticsearch: {str(e)}")
+        st.info("💡 Make sure Elasticsearch is running and check your .env configuration.")
+        UTILS_AVAILABLE = False
+        
+except ImportError:
+    UTILS_AVAILABLE = False
+    st.warning("⚠️ Utils module not available. Search functionality will be limited.")
 
 # Custom CSS for better styling
 st.markdown("""

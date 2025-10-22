@@ -32,10 +32,16 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Load configuration
-CONFIG_PATH = Path(__file__).parent / "config" / "elastic_config.yaml"
+# Load static configuration from YAML
+CONFIG_PATH = Path(__file__).parent / "config.yaml"
 with open(CONFIG_PATH, 'r') as f:
     CONFIG = yaml.safe_load(f)
+
+# Helper function to get boolean from env
+def get_bool_env(key: str, default: bool = False) -> bool:
+    """Parse boolean environment variable."""
+    value = os.getenv(key, str(default)).lower()
+    return value in ('true', '1', 'yes', 'on')
 
 
 class ElasticsearchClient:
@@ -48,36 +54,44 @@ class ElasticsearchClient:
     
     def _connect(self):
         """Establish connection to Elasticsearch."""
-        es_config = CONFIG['elasticsearch']
-        
         try:
+            connection_type = os.getenv('ELASTICSEARCH_CONNECTION_TYPE', 'local')
+            es_config = CONFIG['elasticsearch']
+            timeout = es_config['timeout']
+            max_retries = es_config['max_retries']
+            retry_on_timeout = es_config['retry_on_timeout']
+            
+            # API Key is required for authentication (both local and cloud)
+            api_key = os.getenv('ELASTICSEARCH_API_KEY')
+            if not api_key:
+                raise ValueError("ELASTICSEARCH_API_KEY is required in .env file")
+            
             # Check if using cloud_id (Elastic Cloud)
-            if 'cloud_id' in es_config and es_config.get('cloud_id'):
+            if connection_type == 'cloud' or os.getenv('ELASTICSEARCH_CLOUD_ID'):
+                cloud_id = os.getenv('ELASTICSEARCH_CLOUD_ID')
+                
+                if not cloud_id:
+                    raise ValueError("ELASTICSEARCH_CLOUD_ID is required for cloud connection")
+                
                 self.client = Elasticsearch(
-                    cloud_id=es_config['cloud_id'],
-                    api_key=es_config.get('api_key'),
-                    request_timeout=es_config.get('timeout', 30),
-                    max_retries=es_config.get('max_retries', 3),
-                    retry_on_timeout=es_config.get('retry_on_timeout', True)
+                    cloud_id=cloud_id,
+                    api_key=api_key,
+                    request_timeout=timeout,
+                    max_retries=max_retries,
+                    retry_on_timeout=retry_on_timeout
                 )
             else:
-                # Local or custom Elasticsearch
-                host = es_config.get('host', 'localhost')
-                port = es_config.get('port', 9200)
-                scheme = es_config.get('scheme', 'http')
-                
-                auth_params = {}
-                if 'api_key' in es_config and es_config['api_key']:
-                    auth_params['api_key'] = es_config['api_key']
-                elif 'username' in es_config and 'password' in es_config:
-                    auth_params['basic_auth'] = (es_config['username'], es_config['password'])
+                # Local Elasticsearch
+                host = os.getenv('ELASTICSEARCH_HOST', 'localhost')
+                port = int(os.getenv('ELASTICSEARCH_PORT', '9200'))
+                scheme = os.getenv('ELASTICSEARCH_SCHEME', 'http')
                 
                 self.client = Elasticsearch(
                     [f"{scheme}://{host}:{port}"],
-                    **auth_params,
-                    request_timeout=es_config.get('timeout', 30),
-                    max_retries=es_config.get('max_retries', 3),
-                    retry_on_timeout=es_config.get('retry_on_timeout', True)
+                    api_key=api_key,
+                    request_timeout=timeout,
+                    max_retries=max_retries,
+                    retry_on_timeout=retry_on_timeout
                 )
             
             # Test connection
@@ -101,7 +115,7 @@ class EmbeddingGenerator:
     def __init__(self):
         self.audio_model = None
         self.device = self._setup_device()
-        self.sample_rate = int(os.getenv('MUQ_SAMPLE_RATE', 24000))
+        self.sample_rate = CONFIG['muq']['sample_rate']
         self._setup_audio_model()
         self._setup_vertex_ai()
     
@@ -121,7 +135,7 @@ class EmbeddingGenerator:
             return
         
         try:
-            model_name = os.getenv('MUQ_MODEL', 'OpenMuQ/MuQ-large-msd-iter')
+            model_name = CONFIG['muq']['model']
             logger.info(f"Loading MuQ model: {model_name} on {self.device}")
             self.audio_model = MuQ.from_pretrained(model_name)
             self.audio_model = self.audio_model.to(self.device).eval()
@@ -203,7 +217,7 @@ class EmbeddingGenerator:
         try:
             from vertexai.language_models import TextEmbeddingModel
             
-            model_name = os.getenv('VERTEX_TEXT_EMBEDDING_MODEL', 'text-embedding-004')
+            model_name = CONFIG['vertex_ai']['text_embedding_model']
             model = TextEmbeddingModel.from_pretrained(model_name)
             
             # Generate embedding
