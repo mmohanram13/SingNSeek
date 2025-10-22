@@ -35,3 +35,30 @@ typing_extensions==4.15.0
 tzdata==2025.2
 urllib3==2.5.0
 watchdog==6.0.0
+
+# Elasticsearch and search dependencies
+elasticsearch==8.15.1
+elasticsearch-dsl==8.16.0
+
+# Google Cloud and Vertex AI
+google-cloud-aiplatform==1.75.0
+google-auth==2.39.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
+
+# Audio processing
+librosa==0.10.2.post1
+soundfile==0.12.1
+torch==2.5.1
+torchaudio==2.5.1
+
+# Text embeddings and transformers
+transformers==4.46.3
+sentence-transformers==3.3.1
+
+# Environment and configuration
+python-dotenv==1.0.1
+PyYAML==6.0.2
+
+# Audio recorder for Streamlit (if needed)
+audio-recorder-streamlit==0.0.10

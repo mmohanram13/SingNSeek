@@ -1,2 +1,11 @@
 [theme]
 base="light"
+
+[server]
+headless = true
+enableCORS = true
+enableXsrfProtection = true
+port = 8501
+
+[browser]
+gatherUsageStats = false

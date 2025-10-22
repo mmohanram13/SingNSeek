@@ -4,6 +4,15 @@ import random
 import time
 import base64
 from pathlib import Path
+import tempfile
+
+# Import utility functions for Elasticsearch and search
+try:
+    import utils
+    UTILS_AVAILABLE = True
+except ImportError:
+    UTILS_AVAILABLE = False
+    st.warning("Utils module not available. Search functionality will be limited.")
 
 # Page configuration
 st.set_page_config(
@@ -135,67 +144,67 @@ if 'current_page' not in st.session_state:
 
 # Sample song metadata (since we're displaying randomly)
 SONG_METADATA = {
-    "Aadipaaru Mangatha -May Madham.mp3": {
+    "Aadipaaru Mangatha -May Madham.wav": {
         "title": "Aadipaaru Mangatha",
         "description": "A melodious Tamil song from the movie May Madham",
         "composer": "A.R. Rahman"
     },
-    "Aalangati Mazhai -Thenali.mp3": {
+    "Aalangati Mazhai -Thenali.wav": {
         "title": "Aalangati Mazhai",
         "description": "A beautiful rain song from Thenali",
         "composer": "A.R. Rahman"
     },
-    "Aathi Ena Nee Partha Udana.mp3": {
+    "Aathi Ena Nee Partha Udana.wav": {
         "title": "Aathi Ena Nee Partha Udana",
         "description": "An energetic and catchy Tamil song",
         "composer": "Yuvan Shankar Raja"
     },
-    "Enna Nadanthaalum Penne.mp3": {
+    "Enna Nadanthaalum Penne.wav": {
         "title": "Enna Nadanthaalum Penne",
         "description": "A romantic melody",
         "composer": "Anirudh Ravichander"
     },
-    "Kadhal Kan Kattuthe.mp3": {
+    "Kadhal Kan Kattuthe.wav": {
         "title": "Kadhal Kan Kattuthe",
         "description": "A soothing love song",
         "composer": "A.R. Rahman"
     },
-    "Kadhal Rojave -Roja.mp3": {
+    "Kadhal Rojave -Roja.wav": {
         "title": "Kadhal Rojave",
         "description": "Iconic romantic song from the movie Roja",
         "composer": "A.R. Rahman"
     },
-    "Maanja Pottuthan.mp3": {
+    "Maanja Pottuthan.wav": {
         "title": "Maanja Pottuthan",
         "description": "A fun and upbeat Tamil track",
         "composer": "Yuvan Shankar Raja"
     },
-    "Maargazhi Poove -May Madham.mp3": {
+    "Maargazhi Poove -May Madham.wav": {
         "title": "Maargazhi Poove",
         "description": "A beautiful melody from May Madham",
         "composer": "A.R. Rahman"
     },
-    "Malargal Ketten Vaname Thanthanai-O K Kanmani.mp3": {
+    "Malargal Ketten Vaname Thanthanai-O K Kanmani.wav": {
         "title": "Malargal Ketten",
         "description": "A soul-stirring song from OK Kanmani",
         "composer": "A.R. Rahman"
     },
-    "Vennilave Vennilave Vinai Thandi -Minsara Kanavu.mp3": {
+    "Vennilave Vennilave Vinai Thandi -Minsara Kanavu.wav": {
         "title": "Vennilave Vennilave",
         "description": "Romantic classic from Minsara Kanavu",
         "composer": "A.R. Rahman"
     },
-    "What A Karavad.mp3": {
+    "What A Karavad.wav": {
         "title": "What A Karavad",
         "description": "A peppy and energetic Tamil song",
         "composer": "Anirudh Ravichander"
     },
-    "Why This Kolaveri.mp3": {
+    "Why This Kolaveri.wav": {
         "title": "Why This Kolaveri",
         "description": "Viral sensation and internet phenomenon",
         "composer": "Anirudh Ravichander"
     },
-    "Yaar Petra Magano Nee.mp3": {
+    "Yaar Petra Magano Nee.wav": {
         "title": "Yaar Petra Magano Nee",
         "description": "A heartfelt Tamil melody",
         "composer": "Ilaiyaraaja"
@@ -206,7 +215,7 @@ def get_random_songs(count=5):
     """Get random songs from the dataset folder"""
     dataset_path = Path("dataset")
     if dataset_path.exists():
-        songs = [f for f in os.listdir(dataset_path) if f.endswith('.mp3')]
+        songs = [f for f in os.listdir(dataset_path) if f.endswith('.wav')]
         selected_songs = random.sample(songs, min(count, len(songs)))
         return selected_songs
     return []
@@ -215,23 +224,60 @@ def get_all_songs():
     """Get all songs from the dataset folder"""
     dataset_path = Path("dataset")
     if dataset_path.exists():
-        songs = [f for f in os.listdir(dataset_path) if f.endswith('.mp3')]
+        songs = [f for f in os.listdir(dataset_path) if f.endswith('.wav')]
         return sorted(songs)  # Return sorted list for consistency
     return []
 
-def simulate_search(query):
-    """Simulate search process - this will be called after state is set to searching"""
-    time.sleep(2)  # Simulate search delay
-    
-    # Randomly decide number of results (0-3)
-    num_results = random.randint(0, 3)
-    
-    if num_results > 0:
-        st.session_state.search_results = get_random_songs(num_results)
-        st.session_state.search_state = 'searched'
+def perform_search(query_text, audio_data=None, audio_file=None):
+    """
+    Perform actual search using Elasticsearch and embeddings.
+    Falls back to simulated search if utils are not available.
+    """
+    if UTILS_AVAILABLE:
+        try:
+            # Save audio data to temporary file if provided
+            temp_audio_path = None
+            if audio_data:
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
+                    tmp.write(audio_data)
+                    temp_audio_path = tmp.name
+            elif audio_file:
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
+                    tmp.write(audio_file.getvalue())
+                    temp_audio_path = tmp.name
+            
+            # Perform search
+            results = utils.search_songs(
+                query_text=query_text if query_text and query_text.strip() else None,
+                query_audio_path=temp_audio_path
+            )
+            
+            # Clean up temporary file
+            if temp_audio_path and os.path.exists(temp_audio_path):
+                os.unlink(temp_audio_path)
+            
+            # Update session state with results
+            if results:
+                st.session_state.search_results = results
+                st.session_state.search_state = 'searched'
+            else:
+                st.session_state.search_results = []
+                st.session_state.search_state = 'no_results'
+                
+        except Exception as e:
+            st.error(f"Search error: {str(e)}")
+            st.session_state.search_results = []
+            st.session_state.search_state = 'no_results'
     else:
-        st.session_state.search_results = []
-        st.session_state.search_state = 'no_results'
+        # Fallback: Simulate search
+        time.sleep(2)
+        num_results = random.randint(0, 3)
+        if num_results > 0:
+            st.session_state.search_results = get_random_songs(num_results)
+            st.session_state.search_state = 'searched'
+        else:
+            st.session_state.search_results = []
+            st.session_state.search_state = 'no_results'
 
 # ===== SECTION 1: LOGO AND TITLE =====
 logo_path = "images/logo.png"
@@ -255,7 +301,7 @@ if os.path.exists(logo_path):
                 st.session_state.current_page = 'all_songs'
                 st.rerun()
         with nav_col3:
-            if st.button("Add Song", key="add_song_btn", use_container_width=True,
+            if st.button("Manage", key="add_song_btn", use_container_width=True,
                         type="primary" if st.session_state.current_page == 'add_song' else "secondary"):
                 st.session_state.current_page = 'add_song'
                 st.rerun()
@@ -268,7 +314,7 @@ st.markdown("---")
 # ===== PAGE ROUTING =====
 if st.session_state.current_page == 'home':
     # ===== SECTION 2: SEARCH INPUT =====
-    st.markdown("<h3 style='text-align: center;'>Got a song stuck in your head? ✨ We'll find that for you! ✨</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center;'>Can't remember the song? Just hum, type, or guess & we'll find it! ✨</h3>", unsafe_allow_html=True)
 
     # Spacing
     st.markdown("""
@@ -290,7 +336,7 @@ if st.session_state.current_page == 'home':
     # TEXT SEARCH - Always visible
     search_query = st.text_area(
         "Search",
-        placeholder="Type anything you remember: lyrics, movie, or composer. Or just hum and leave the box empty!",
+        placeholder="Type what you think you heard: lyrics, movie, or composer. Or just hum it and leave the box empty!",
         label_visibility="collapsed",
         key="search_input"
     )
@@ -304,7 +350,7 @@ if st.session_state.current_page == 'home':
         
         audio_file = st.file_uploader(
             "Upload audio file",
-            type=['mp3', 'wav'],
+            type=['wav'],
             label_visibility="collapsed",
             help="Upload your audio file (Max 20 MB)",
             key="file_uploader",
@@ -499,7 +545,7 @@ if st.session_state.current_page == 'home':
     # Search button
     col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
     with col_btn2:
-        button_text = "Searching..." if st.session_state.search_state == 'searching' else "Search Song"
+        button_text = "Searching..." if st.session_state.search_state == 'searching' else "Find My Song!"
         button_disabled = st.session_state.search_state == 'searching'
         
         if st.button(button_text, use_container_width=True, type="primary", disabled=button_disabled):
@@ -517,6 +563,7 @@ if st.session_state.current_page == 'home':
                 """, height=0)
                 
                 st.session_state.search_state = 'searching'
+                st.session_state.search_query = search_query  # Save search query
                 st.session_state.search_results = []  # Clear previous results
                 st.session_state.scroll_to_results = True  # Enable scroll for new search
                 # Reset audio inputs after search
@@ -556,7 +603,11 @@ if st.session_state.current_page == 'home':
         col_loading1, col_loading2, col_loading3 = st.columns([1, 2, 1])
         with col_loading2:
             with st.spinner("Analyzing your input and matching with our database..."):
-                simulate_search(st.session_state.search_query or "audio_file")
+                perform_search(
+                    st.session_state.get('search_query', ''),
+                    audio_data=st.session_state.get('audio_bytes'),
+                    audio_file=st.session_state.get('audio_file')
+                )
             st.rerun()
 
     # State: SEARCHED - RESULTS FOUND
@@ -575,25 +626,77 @@ if st.session_state.current_page == 'home':
             """, height=0)
             st.session_state.scroll_to_results = False
         
-        for idx, song_file in enumerate(st.session_state.search_results, 1):
-            song_data = SONG_METADATA.get(song_file, {
-                "title": song_file.replace('.mp3', ''),
-                "description": "A beautiful Tamil melody",
-                "composer": "Unknown"
-            })
+        for idx, song_result in enumerate(st.session_state.search_results, 1):
+            # Handle both dict (from Elasticsearch) and string (fallback) results
+            if isinstance(song_result, dict):
+                song_data = {
+                    'title': song_result.get('song_name', 'Unknown'),
+                    'composer': song_result.get('composer', 'Unknown'),
+                    'genre': song_result.get('genre', ''),
+                    'album': song_result.get('album', ''),
+                    'singers': song_result.get('singers', ''),
+                    'lyrics': song_result.get('lyrics', ''),
+                    'released_year': song_result.get('released_year', ''),
+                    'score': song_result.get('_score', 0)
+                }
+                song_file = song_result.get('song_file_path_name', '')
+            else:
+                # Fallback for string results (old format)
+                song_file = song_result
+                song_data = SONG_METADATA.get(song_file, {
+                    "title": song_file.replace('.wav', ''),
+                    "description": "A beautiful Tamil melody",
+                    "composer": "Unknown"
+                })
             
-            st.markdown(f"""
+            # Build song card HTML with optional fields
+            song_card_html = f"""
                 <div class="song-card">
-                    <div class="song-title">#{idx} {song_data['title']}</div>
-                    <div class="song-info">📝 {song_data['description']}</div>
-                    <div class="song-info">🎼 Composed by {song_data['composer']}</div>
-                </div>
-            """, unsafe_allow_html=True)
+                    <div class="song-title">#{idx} {song_data.get('title', 'Unknown')}</div>
+            """
+            
+            # Add score if available
+            if song_data.get('score'):
+                song_card_html += f"<div class='song-info'>⭐ Relevance Score: {song_data['score']:.2f}</div>"
+            
+            # Add description if available (from old format)
+            if song_data.get('description'):
+                song_card_html += f"<div class='song-info'>📝 {song_data['description']}</div>"
+            
+            # Add composer
+            song_card_html += f"<div class='song-info'>🎼 Composed by {song_data.get('composer', 'Unknown')}</div>"
+            
+            # Add singers if available
+            if song_data.get('singers'):
+                song_card_html += f"<div class='song-info'>🎤 Singers: {song_data['singers']}</div>"
+            
+            # Add genre if available
+            if song_data.get('genre'):
+                song_card_html += f"<div class='song-info'>🎵 Genre: {song_data['genre']}</div>"
+            
+            # Add album if available
+            if song_data.get('album'):
+                song_card_html += f"<div class='song-info'>💿 Album: {song_data['album']}</div>"
+            
+            # Add year if available
+            if song_data.get('released_year'):
+                song_card_html += f"<div class='song-info'>📅 Year: {song_data['released_year']}</div>"
+            
+            # Add lyrics if available
+            if song_data.get('lyrics'):
+                # Show first 150 characters of lyrics
+                lyrics_preview = song_data['lyrics'][:150] + "..." if len(song_data['lyrics']) > 150 else song_data['lyrics']
+                song_card_html += f"<div class='song-info'>📄 Lyrics: {lyrics_preview}</div>"
+            
+            song_card_html += "</div>"
+            
+            st.markdown(song_card_html, unsafe_allow_html=True)
             
             # Use st.audio with lazy loading (preload="none")
-            song_path = f"dataset/{song_file}"
-            if os.path.exists(song_path):
-                st.audio(song_path, format='audio/mp3')
+            if song_file:
+                song_path = f"dataset/copyright/{song_file}"
+                if os.path.exists(song_path):
+                    st.audio(song_path, format='audio/wav')
             
             st.markdown("<div style='margin-bottom: 0.5rem;'></div>", unsafe_allow_html=True)
 
@@ -627,49 +730,166 @@ elif st.session_state.current_page == 'all_songs':
     st.markdown("<p style='text-align: center; color: #666; margin-bottom: 1.5rem; font-size: 0.95rem;'>Browse our complete collection of songs!</p>", 
                 unsafe_allow_html=True)
     
-    all_songs = get_all_songs()
+    # Try to get songs from Elasticsearch, fall back to file system
+    all_songs = []
+    if UTILS_AVAILABLE:
+        try:
+            all_songs = utils.get_all_songs()
+        except Exception as e:
+            st.warning(f"Could not retrieve songs from Elasticsearch: {str(e)}")
+            all_songs = []
+    
+    # Fallback to file system if Elasticsearch not available or failed
+    if not all_songs:
+        all_songs_files = get_all_songs()
+        # Convert to dict format for consistency
+        all_songs = [{'song_name': f.replace('.wav', ''), 'song_file_path_name': f} for f in all_songs_files]
     
     if all_songs:
         
-        for idx, song_file in enumerate(all_songs, 1):
-            song_data = SONG_METADATA.get(song_file, {
-                "title": song_file.replace('.mp3', ''),
-                "description": "A beautiful Tamil melody",
-                "composer": "Unknown"
-            })
+        for idx, song_result in enumerate(all_songs, 1):
+            # Handle both dict (from Elasticsearch) and string (fallback) results
+            if isinstance(song_result, dict):
+                song_data = {
+                    'title': song_result.get('song_name', 'Unknown'),
+                    'composer': song_result.get('composer', 'Unknown'),
+                    'genre': song_result.get('genre', ''),
+                    'album': song_result.get('album', ''),
+                    'singers': song_result.get('singers', ''),
+                    'lyrics': song_result.get('lyrics', ''),
+                    'lyricist': song_result.get('lyricist', ''),
+                    'released_year': song_result.get('released_year', '')
+                }
+                song_file = song_result.get('song_file_path_name', '')
+            else:
+                # Fallback for string results
+                song_file = song_result
+                song_data = SONG_METADATA.get(song_file, {
+                    "title": song_file.replace('.wav', ''),
+                    "description": "A beautiful Tamil melody",
+                    "composer": "Unknown"
+                })
             
-            st.markdown(f"""
+            # Build song card HTML with optional fields
+            song_card_html = f"""
                 <div class="song-card">
-                    <div class="song-title">#{idx} {song_data['title']}</div>
-                    <div class="song-info">📝 {song_data['description']}</div>
-                    <div class="song-info">🎼 Composed by {song_data['composer']}</div>
-                </div>
-            """, unsafe_allow_html=True)
+                    <div class="song-title">#{idx} {song_data.get('title', 'Unknown')}</div>
+            """
+            
+            # Add description if available (from old format)
+            if song_data.get('description'):
+                song_card_html += f"<div class='song-info'>📝 {song_data['description']}</div>"
+            
+            # Add composer
+            if song_data.get('composer'):
+                song_card_html += f"<div class='song-info'>🎼 Composed by {song_data['composer']}</div>"
+            
+            # Add lyricist if available
+            if song_data.get('lyricist'):
+                song_card_html += f"<div class='song-info'>✍️ Lyricist: {song_data['lyricist']}</div>"
+            
+            # Add singers if available
+            if song_data.get('singers'):
+                song_card_html += f"<div class='song-info'>🎤 Singers: {song_data['singers']}</div>"
+            
+            # Add genre if available
+            if song_data.get('genre'):
+                song_card_html += f"<div class='song-info'>🎵 Genre: {song_data['genre']}</div>"
+            
+            # Add album if available
+            if song_data.get('album'):
+                song_card_html += f"<div class='song-info'>💿 Album: {song_data['album']}</div>"
+            
+            # Add year if available
+            if song_data.get('released_year'):
+                song_card_html += f"<div class='song-info'>📅 Year: {song_data['released_year']}</div>"
+            
+            # Add lyrics if available
+            if song_data.get('lyrics'):
+                # Show first 100 characters of lyrics
+                lyrics_preview = song_data['lyrics'][:100] + "..." if len(song_data['lyrics']) > 100 else song_data['lyrics']
+                song_card_html += f"<div class='song-info'>📄 Lyrics: {lyrics_preview}</div>"
+            
+            song_card_html += "</div>"
+            
+            st.markdown(song_card_html, unsafe_allow_html=True)
             
             # Use st.audio with lazy loading (preload="none")
-            song_path = f"dataset/{song_file}"
-            if os.path.exists(song_path):
-                st.audio(song_path, format='audio/mp3')
+            if song_file:
+                song_path = f"dataset/copyright/{song_file}"
+                if os.path.exists(song_path):
+                    st.audio(song_path, format='audio/wav')
             
             st.markdown("<div style='margin-bottom: 0.5rem;'></div>", unsafe_allow_html=True)
     else:
         st.info("No songs found in the database.")
 
 elif st.session_state.current_page == 'add_song':
-    # ===== ADD SONG PAGE =====
+    # ===== MANAGE PAGE =====
+    
+    # Show index statistics if available
+    if UTILS_AVAILABLE:
+        try:
+            stats = utils.get_index_stats()
+            if stats.get('exists'):
+                st.info(f"📊 Index Status: **Active** | Documents: **{stats.get('doc_count', 0)}** | Size: **{stats.get('size_readable', 'N/A')}**")
+            else:
+                st.warning("⚠️ Elasticsearch index does not exist. Create one to enable search.")
+        except Exception as e:
+            st.warning(f"Could not retrieve index stats: {str(e)}")
+    else:
+        st.error("⚠️ Utils module not available. Please ensure all dependencies are installed.")
+    
+    st.markdown("<div style='margin-bottom: 1rem;'></div>", unsafe_allow_html=True)
+    
+    # Elasticsearch Index Management Buttons
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("Create Index", use_container_width=True, disabled=not UTILS_AVAILABLE):
+            with st.spinner("Creating Elasticsearch index..."):
+                try:
+                    if utils.create_song_index():
+                        st.success("✅ Elasticsearch index created successfully!")
+                    else:
+                        st.warning("Index already exists or could not be created.")
+                except Exception as e:
+                    st.error(f"❌ Error creating index: {str(e)}")
+                st.rerun()
+    
+    with col2:
+        if st.button("Load Demo Data", use_container_width=True, disabled=not UTILS_AVAILABLE):
+            with st.spinner("Loading demo data into Elasticsearch... This may take several minutes."):
+                try:
+                    successful, failed = utils.load_demo_data()
+                    if successful > 0:
+                        st.success(f"✅ Successfully indexed {successful} songs!")
+                        if failed > 0:
+                            st.warning(f"⚠️ {failed} songs failed to index.")
+                    else:
+                        st.error("❌ No songs were indexed. Check if the index exists and data is available.")
+                except Exception as e:
+                    st.error(f"❌ Error loading data: {str(e)}")
+                st.rerun()
+    
+    with col3:
+        if st.button("Delete Index", use_container_width=True, type="secondary", disabled=not UTILS_AVAILABLE):
+            with st.spinner("Deleting Elasticsearch index..."):
+                try:
+                    if utils.delete_song_index():
+                        st.success("✅ Elasticsearch index deleted successfully!")
+                    else:
+                        st.warning("Index does not exist or could not be deleted.")
+                except Exception as e:
+                    st.error(f"❌ Error deleting index: {str(e)}")
+                st.rerun()
+    
+    st.markdown("<div style='margin-bottom: 1rem;'></div>", unsafe_allow_html=True)
+    
     st.markdown("<h2 style='text-align: center; color: #FF4B4B; font-size: 1.8rem; margin-bottom: 0.5rem;'>Add New Song</h2>", 
                 unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #666; margin-bottom: 1rem; font-size: 0.95rem;'>Fill in the details to add a new song to the database</p>", 
                 unsafe_allow_html=True)
-    
-    # Display upload limitation info
-    st.markdown("""
-        <div style='background-color: #FFF3CD; border: 1px solid #FFECB5; border-radius: 6px; padding: 0.75rem; margin-bottom: 1.5rem;'>
-            <div style='color: #856404; font-size: 0.9rem; text-align: center; font-weight: 500;'>
-                Note: You can upload a maximum of 20 songs to the database. Once the limit is reached, an error will be shown.
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
     
     # Create a form for adding songs
     with st.form("add_song_form", clear_on_submit=True):
@@ -685,16 +905,38 @@ elif st.session_state.current_page == 'add_song':
             placeholder="Enter the music director or composer name"
         )
         
+        # Genre - Optional
+        genre = st.text_input(
+            "Genre",
+            placeholder="Enter the genre (e.g., Romance, Folk, Pop)"
+        )
+        
+        # Album - Optional
+        album = st.text_input(
+            "Album",
+            placeholder="Enter the album or movie name"
+        )
+        
+        # Lyrics - Optional (Multiline)
+        lyrics = st.text_area(
+            "Lyrics",
+            placeholder="Enter the song lyrics here...",
+            height=150
+        )
+        
         # Song Input - Mandatory
         song_file = st.file_uploader(
             "Song File *",
-            type=['mp3', 'wav']
+            type=['wav']
         )
+        
+        # Add spacing before button
+        st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
         
         # Submit button
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            submit_button = st.form_submit_button("Save Song", use_container_width=True, type="primary")
+            submit_button = st.form_submit_button("Save Song (Coming Soon)", use_container_width=True, type="primary", disabled=True)
         
         if submit_button:
             # Validate mandatory fields
@@ -727,13 +969,21 @@ elif st.session_state.current_page == 'add_song':
                         
                         # Update SONG_METADATA dictionary (in-memory only for this session)
                         # In a real app, you'd save this to a database or JSON file
-                        description = f"A beautiful song"
-                        
-                        SONG_METADATA[filename] = {
+                        metadata = {
                             "title": safe_song_name,
-                            "description": description,
+                            "description": f"A beautiful song",
                             "composer": music_director.strip()
                         }
+                        
+                        # Add optional fields if provided
+                        if genre and genre.strip():
+                            metadata["genre"] = genre.strip()
+                        if album and album.strip():
+                            metadata["album"] = album.strip()
+                        if lyrics and lyrics.strip():
+                            metadata["lyrics"] = lyrics.strip()
+                        
+                        SONG_METADATA[filename] = metadata
                         
                         st.success(f"✅ Song '{song_name}' has been added successfully!")
                         st.info("Navigate to 'All Songs' to see your newly added song.")
@@ -745,7 +995,7 @@ elif st.session_state.current_page == 'add_song':
 st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
 st.markdown("""
     <div style='text-align: center; color: #999; font-size: 0.85rem; padding: 1rem 0 0.5rem 0;'>
-        Made with ❤️ for music lovers | Developed by Mohan Ram M | 
+        Made with ❤️ for forgetful music lovers&nbsp;&nbsp; | &nbsp;&nbsp;Developed by Mohan Ram M | 
         <a href='https://github.com/mmohanram13' target='_blank' style='color: #333; text-decoration: none;'>
             GitHub
         </a> | 
