@@ -5,7 +5,6 @@ Handles Elasticsearch operations, embeddings generation, and hybrid search.
 
 import os
 import yaml
-import logging
 from typing import List, Dict, Optional, Tuple, Any
 from pathlib import Path
 
@@ -23,11 +22,13 @@ try:
     from muq import MuQ
 except ImportError:
     MuQ = None
-    logging.warning("MuQ not installed. Audio embeddings will not be available.")
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from logging_config import setup_logging, get_logger
+
+# Initialize logging system (call once at module import)
+setup_logging()
+logger = get_logger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -155,14 +156,7 @@ class EmbeddingGenerator:
                 return
             
             # Initialize Vertex AI
-            credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-            if credentials_path and os.path.exists(credentials_path):
-                credentials = service_account.Credentials.from_service_account_file(
-                    credentials_path
-                )
-                aiplatform.init(project=project_id, location=region, credentials=credentials)
-            else:
-                aiplatform.init(project=project_id, location=region)
+            aiplatform.init(project=project_id, location=region)
             
             logger.info("Vertex AI initialized successfully")
         except Exception as e:
@@ -376,18 +370,63 @@ def delete_song_index(index_name: Optional[str] = None) -> bool:
         return False
 
 
+def initialize_and_load_demo_data(
+    index_name: Optional[str] = None,
+    csv_path: str = "dataset/copyright/dataset_meta.csv",
+    audio_dir: str = "dataset/copyright",
+    progress_callback: Optional[callable] = None
+) -> Tuple[int, int]:
+    """
+    Initialize index (delete if exists, create new) and load demo data.
+    This is a combined operation that ensures a fresh index with demo data.
+    
+    Args:
+        index_name: Name of the index (defaults to config value)
+        csv_path: Path to CSV file with metadata
+        audio_dir: Directory containing audio files
+        progress_callback: Optional callback function(current, total, song_name) to report progress
+    
+    Returns:
+        Tuple of (successful_count, failed_count)
+    """
+    if index_name is None:
+        index_name = CONFIG['elasticsearch']['index_name']
+    
+    es_client = get_es_client().get_client()
+    
+    # Step 1: Delete index if it exists
+    try:
+        if es_client.indices.exists(index=index_name):
+            es_client.indices.delete(index=index_name)
+            logger.info(f"Deleted existing index '{index_name}'")
+    except Exception as e:
+        logger.error(f"Failed to delete existing index '{index_name}': {e}")
+        return (0, 0)
+    
+    # Step 2: Create new index
+    if not create_song_index(index_name):
+        logger.error(f"Failed to create index '{index_name}'")
+        return (0, 0)
+    
+    # Step 3: Load demo data
+    return load_demo_data(index_name, csv_path, audio_dir, progress_callback)
+
+
 def load_demo_data(
     index_name: Optional[str] = None,
     csv_path: str = "dataset/copyright/dataset_meta.csv",
-    audio_dir: str = "dataset/copyright"
+    audio_dir: str = "dataset/copyright",
+    progress_callback: Optional[callable] = None
 ) -> Tuple[int, int]:
     """
     Load demo data from CSV and audio files into Elasticsearch.
+    Indexes songs one at a time to prevent memory issues with large datasets.
     
     Args:
         index_name: Name of the index
         csv_path: Path to CSV file with metadata
         audio_dir: Directory containing audio files
+        progress_callback: Optional callback function(current, total, song_name) to report progress
     
     Returns:
         Tuple of (successful_count, failed_count)
@@ -416,10 +455,9 @@ def load_demo_data(
     
     successful = 0
     failed = 0
+    total_songs = len(df)
     
-    # Prepare bulk actions
-    actions = []
-    
+    # Index songs one at a time
     for idx, row in df.iterrows():
         try:
             # Prepare song data
@@ -450,34 +488,25 @@ def load_demo_data(
             else:
                 logger.warning(f"Audio file not found: {audio_path}")
             
-            # Add to bulk actions
-            action = {
-                "_index": index_name,
-                "_id": str(row['song_index']),
-                "_source": song_data
-            }
-            actions.append(action)
+            # Index this song immediately
+            es_client.index(
+                index=index_name,
+                id=str(row['song_index']),
+                document=song_data
+            )
             
-            logger.info(f"Prepared song {idx + 1}/{len(df)}: {row['song_name']}")
+            successful += 1
+            logger.info(f"Indexed song {idx + 1}/{total_songs}: {row['song_name']}")
+            
+            # Call progress callback if provided
+            if progress_callback:
+                progress_callback(idx + 1, total_songs, row['song_name'])
             
         except Exception as e:
-            logger.error(f"Failed to prepare song {idx}: {e}")
             failed += 1
+            logger.error(f"Failed to index song {idx + 1}/{total_songs} ({row.get('song_name', 'Unknown')}): {e}")
     
-    # Bulk index
-    try:
-        if actions:
-            success, errors = helpers.bulk(es_client, actions, raise_on_error=False)
-            successful = success
-            if errors:
-                failed += len(errors)
-                logger.error(f"Bulk indexing had {len(errors)} errors")
-            
-            logger.info(f"Successfully indexed {successful} songs, {failed} failed")
-    except Exception as e:
-        logger.error(f"Bulk indexing failed: {e}")
-        failed = len(actions)
-    
+    logger.info(f"Indexing complete: {successful} successful, {failed} failed")
     return (successful, failed)
 
 
@@ -695,12 +724,23 @@ def get_index_stats(index_name: Optional[str] = None) -> Dict:
         stats = es_client.indices.stats(index=index_name)
         count_response = es_client.count(index=index_name)
         
+        # Get size in bytes and format it
+        size_bytes = stats['_all']['primaries']['store']['size_in_bytes']
+        
+        # Format bytes to human-readable format
+        def format_bytes(bytes_val):
+            for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+                if bytes_val < 1024.0:
+                    return f"{bytes_val:.2f} {unit}"
+                bytes_val /= 1024.0
+            return f"{bytes_val:.2f} PB"
+        
         return {
             "exists": True,
             "index_name": index_name,
             "doc_count": count_response['count'],
-            "size_in_bytes": stats['_all']['primaries']['store']['size_in_bytes'],
-            "size_readable": stats['_all']['primaries']['store']['size']
+            "size_in_bytes": size_bytes,
+            "size_readable": format_bytes(size_bytes)
         }
         
     except Exception as e:

@@ -208,8 +208,7 @@ For sensitive credentials, use environment variables:
 
 - `ELASTICSEARCH_HOST`: Elasticsearch host (default: localhost)
 - `ELASTICSEARCH_PORT`: Elasticsearch port (default: 9200)
-- `ELASTICSEARCH_USERNAME`: Username (default: elastic)
-- `ELASTICSEARCH_PASSWORD`: Password
+- `ELASTICSEARCH_API_KEY`: Your ElasticSearch API key
 - `GOOGLE_CLOUD_PROJECT`: Your GCP project ID (for Vertex AI)
 
 ---

@@ -21,7 +21,8 @@ elasticsearch:
 
 embeddings:
   # Audio Embeddings Dimensions (MuQ model output)
-  audio_dims: 512
+  # MuQ-large-msd-iter outputs 1024-dimensional embeddings
+  audio_dims: 1024
   
   # Text Embeddings Dimensions (Vertex AI text-embedding-004)
   text_dims: 768
@@ -56,3 +57,22 @@ muq:
 vertex_ai:
   text_embedding_model: text-embedding-004
   rerank_model: gemini-1.5-flash-002
+
+# ============================================================================
+# LOGGING CONFIGURATION
+# ============================================================================
+
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: INFO
+  
+  # Log file settings
+  file: server.log
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
+  
+  # Elasticsearch logging (for observability dashboard)
+  elasticsearch:
+    enabled: true
+    index_name: singnseek-logs
+    index_frequency: daily  # daily, weekly, monthly, yearly

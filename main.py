@@ -13,22 +13,19 @@ st.set_page_config(
     layout="centered"
 )
 
+# Configure logging
+from logging_config import setup_logging, get_logger
+setup_logging()
+logger = get_logger(__name__)
+
 # Import utility functions for Elasticsearch and search
 try:
     import utils
     UTILS_AVAILABLE = True
-    
-    # Check Elasticsearch connection at startup
-    try:
-        es_client = utils.get_es_client()
-        st.success("✅ Connected to Elasticsearch successfully!")
-    except Exception as e:
-        st.error(f"❌ Failed to connect to Elasticsearch: {str(e)}")
-        st.info("💡 Make sure Elasticsearch is running and check your .env configuration.")
-        UTILS_AVAILABLE = False
-        
-except ImportError:
+    logger.info("Utils module loaded successfully")
+except ImportError as e:
     UTILS_AVAILABLE = False
+    logger.error(f"Utils module not available: {e}")
     st.warning("⚠️ Utils module not available. Search functionality will be limited.")
 
 # Custom CSS for better styling
@@ -151,75 +148,10 @@ if 'scroll_to_results' not in st.session_state:
     st.session_state.scroll_to_results = False
 if 'current_page' not in st.session_state:
     st.session_state.current_page = 'home'
-
-# Sample song metadata (since we're displaying randomly)
-SONG_METADATA = {
-    "Aadipaaru Mangatha -May Madham.wav": {
-        "title": "Aadipaaru Mangatha",
-        "description": "A melodious Tamil song from the movie May Madham",
-        "composer": "A.R. Rahman"
-    },
-    "Aalangati Mazhai -Thenali.wav": {
-        "title": "Aalangati Mazhai",
-        "description": "A beautiful rain song from Thenali",
-        "composer": "A.R. Rahman"
-    },
-    "Aathi Ena Nee Partha Udana.wav": {
-        "title": "Aathi Ena Nee Partha Udana",
-        "description": "An energetic and catchy Tamil song",
-        "composer": "Yuvan Shankar Raja"
-    },
-    "Enna Nadanthaalum Penne.wav": {
-        "title": "Enna Nadanthaalum Penne",
-        "description": "A romantic melody",
-        "composer": "Anirudh Ravichander"
-    },
-    "Kadhal Kan Kattuthe.wav": {
-        "title": "Kadhal Kan Kattuthe",
-        "description": "A soothing love song",
-        "composer": "A.R. Rahman"
-    },
-    "Kadhal Rojave -Roja.wav": {
-        "title": "Kadhal Rojave",
-        "description": "Iconic romantic song from the movie Roja",
-        "composer": "A.R. Rahman"
-    },
-    "Maanja Pottuthan.wav": {
-        "title": "Maanja Pottuthan",
-        "description": "A fun and upbeat Tamil track",
-        "composer": "Yuvan Shankar Raja"
-    },
-    "Maargazhi Poove -May Madham.wav": {
-        "title": "Maargazhi Poove",
-        "description": "A beautiful melody from May Madham",
-        "composer": "A.R. Rahman"
-    },
-    "Malargal Ketten Vaname Thanthanai-O K Kanmani.wav": {
-        "title": "Malargal Ketten",
-        "description": "A soul-stirring song from OK Kanmani",
-        "composer": "A.R. Rahman"
-    },
-    "Vennilave Vennilave Vinai Thandi -Minsara Kanavu.wav": {
-        "title": "Vennilave Vennilave",
-        "description": "Romantic classic from Minsara Kanavu",
-        "composer": "A.R. Rahman"
-    },
-    "What A Karavad.wav": {
-        "title": "What A Karavad",
-        "description": "A peppy and energetic Tamil song",
-        "composer": "Anirudh Ravichander"
-    },
-    "Why This Kolaveri.wav": {
-        "title": "Why This Kolaveri",
-        "description": "Viral sensation and internet phenomenon",
-        "composer": "Anirudh Ravichander"
-    },
-    "Yaar Petra Magano Nee.wav": {
-        "title": "Yaar Petra Magano Nee",
-        "description": "A heartfelt Tamil melody",
-        "composer": "Ilaiyaraaja"
-    }
-}
+if 'es_connected' not in st.session_state:
+    st.session_state.es_connected = None  # None = not checked yet, True = connected, False = failed
+if 'es_connection_error' not in st.session_state:
+    st.session_state.es_connection_error = None
 
 def get_random_songs(count=5):
     """Get random songs from the dataset folder"""
@@ -238,6 +170,28 @@ def get_all_songs():
         return sorted(songs)  # Return sorted list for consistency
     return []
 
+def check_es_connection():
+    """
+    Check Elasticsearch connection and update session state.
+    This is called after the page renders to avoid blocking.
+    """
+    if not UTILS_AVAILABLE:
+        st.session_state.es_connected = False
+        st.session_state.es_connection_error = "Utils module not available"
+        return
+    
+    if st.session_state.es_connected is None:
+        try:
+            logger.info("Attempting to connect to Elasticsearch")
+            es_client = utils.get_es_client()
+            st.session_state.es_connected = True
+            st.session_state.es_connection_error = None
+            logger.info("Successfully connected to Elasticsearch")
+        except Exception as e:
+            st.session_state.es_connected = False
+            st.session_state.es_connection_error = str(e)
+            logger.error(f"Failed to connect to Elasticsearch: {e}", exc_info=True)
+
 def perform_search(query_text, audio_data=None, audio_file=None):
     """
     Perform actual search using Elasticsearch and embeddings.
@@ -245,16 +199,20 @@ def perform_search(query_text, audio_data=None, audio_file=None):
     """
     if UTILS_AVAILABLE:
         try:
+            logger.info(f"Performing search - query_text: {query_text}, has_audio: {audio_data is not None or audio_file is not None}")
+            
             # Save audio data to temporary file if provided
             temp_audio_path = None
             if audio_data:
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
                     tmp.write(audio_data)
                     temp_audio_path = tmp.name
+                logger.info(f"Saved audio data to temporary file: {temp_audio_path}")
             elif audio_file:
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
                     tmp.write(audio_file.getvalue())
                     temp_audio_path = tmp.name
+                logger.info(f"Saved uploaded audio file to temporary file: {temp_audio_path}")
             
             # Perform search
             results = utils.search_songs(
@@ -265,16 +223,20 @@ def perform_search(query_text, audio_data=None, audio_file=None):
             # Clean up temporary file
             if temp_audio_path and os.path.exists(temp_audio_path):
                 os.unlink(temp_audio_path)
+                logger.debug(f"Cleaned up temporary file: {temp_audio_path}")
             
             # Update session state with results
             if results:
                 st.session_state.search_results = results
                 st.session_state.search_state = 'searched'
+                logger.info(f"Search completed successfully - found {len(results)} results")
             else:
                 st.session_state.search_results = []
                 st.session_state.search_state = 'no_results'
+                logger.info("Search completed - no results found")
                 
         except Exception as e:
+            logger.error(f"Search error: {str(e)}", exc_info=True)
             st.error(f"Search error: {str(e)}")
             st.session_state.search_results = []
             st.session_state.search_state = 'no_results'
@@ -320,6 +282,19 @@ else:
                 unsafe_allow_html=True)
 
 st.markdown("---")
+
+# Create a placeholder for connection status that renders immediately
+status_placeholder = st.empty()
+
+# Show Elasticsearch connection status (non-blocking)
+if UTILS_AVAILABLE:
+    if st.session_state.es_connected is None:
+        # Show checking status but don't block - connection check happens below
+        status_placeholder.info("🔄 Checking Elasticsearch connection...")
+    elif st.session_state.es_connected is False:
+        status_placeholder.error(f"❌ Failed to connect to Elasticsearch: {st.session_state.es_connection_error}")
+        st.info("💡 Make sure Elasticsearch is running and check your .env configuration.")
+    # Don't show success message here - it's already connected, no need to keep showing it
 
 # ===== PAGE ROUTING =====
 if st.session_state.current_page == 'home':
@@ -555,8 +530,19 @@ if st.session_state.current_page == 'home':
     # Search button
     col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
     with col_btn2:
-        button_text = "Searching..." if st.session_state.search_state == 'searching' else "Find My Song!"
-        button_disabled = st.session_state.search_state == 'searching'
+        # Determine button state
+        if not UTILS_AVAILABLE or st.session_state.es_connected is False:
+            button_text = "Elasticsearch Not Connected"
+            button_disabled = True
+        elif st.session_state.es_connected is None:
+            button_text = "Connecting to Elasticsearch..."
+            button_disabled = True
+        elif st.session_state.search_state == 'searching':
+            button_text = "Searching..."
+            button_disabled = True
+        else:
+            button_text = "Find My Song!"
+            button_disabled = False
         
         if st.button(button_text, use_container_width=True, type="primary", disabled=button_disabled):
             if search_query or audio_file or audio_bytes:
@@ -650,14 +636,6 @@ if st.session_state.current_page == 'home':
                     'score': song_result.get('_score', 0)
                 }
                 song_file = song_result.get('song_file_path_name', '')
-            else:
-                # Fallback for string results (old format)
-                song_file = song_result
-                song_data = SONG_METADATA.get(song_file, {
-                    "title": song_file.replace('.wav', ''),
-                    "description": "A beautiful Tamil melody",
-                    "composer": "Unknown"
-                })
             
             # Build song card HTML with optional fields
             song_card_html = f"""
@@ -771,14 +749,6 @@ elif st.session_state.current_page == 'all_songs':
                     'released_year': song_result.get('released_year', '')
                 }
                 song_file = song_result.get('song_file_path_name', '')
-            else:
-                # Fallback for string results
-                song_file = song_result
-                song_data = SONG_METADATA.get(song_file, {
-                    "title": song_file.replace('.wav', ''),
-                    "description": "A beautiful Tamil melody",
-                    "composer": "Unknown"
-                })
             
             # Build song card HTML with optional fields
             song_card_html = f"""
@@ -844,7 +814,7 @@ elif st.session_state.current_page == 'add_song':
             if stats.get('exists'):
                 st.info(f"📊 Index Status: **Active** | Documents: **{stats.get('doc_count', 0)}** | Size: **{stats.get('size_readable', 'N/A')}**")
             else:
-                st.warning("⚠️ Elasticsearch index does not exist. Create one to enable search.")
+                st.warning("⚠️ Elasticsearch index does not exist. Click below to initialise and enable search.")
         except Exception as e:
             st.warning(f"Could not retrieve index stats: {str(e)}")
     else:
@@ -852,47 +822,58 @@ elif st.session_state.current_page == 'add_song':
     
     st.markdown("<div style='margin-bottom: 1rem;'></div>", unsafe_allow_html=True)
     
-    # Elasticsearch Index Management Buttons
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("Create Index", use_container_width=True, disabled=not UTILS_AVAILABLE):
-            with st.spinner("Creating Elasticsearch index..."):
-                try:
-                    if utils.create_song_index():
-                        st.success("✅ Elasticsearch index created successfully!")
-                    else:
-                        st.warning("Index already exists or could not be created.")
-                except Exception as e:
-                    st.error(f"❌ Error creating index: {str(e)}")
-                st.rerun()
+    # Elasticsearch Index Management Button
+    col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        if st.button("Load Demo Data", use_container_width=True, disabled=not UTILS_AVAILABLE):
-            with st.spinner("Loading demo data into Elasticsearch... This may take several minutes."):
-                try:
-                    successful, failed = utils.load_demo_data()
+        if st.button("Initialize and Load Demo Data", use_container_width=True, type="primary", disabled=not UTILS_AVAILABLE):
+            # Create placeholders for progress display
+            progress_container = st.empty()
+            status_container = st.empty()
+            
+            try:
+                # Define progress callback
+                def update_progress(current, total, song_name):
+                    progress_container.progress(current / total, text=f"Indexing song {current}/{total}")
+                    status_container.info(f"🎵 Currently indexing: **{song_name}**")
+                
+                status_container.info("🔄 Initializing index and loading demo data...")
+                
+                # Delete existing index if it exists
+                es_client = utils.get_es_client().get_client()
+                index_name = utils.CONFIG['elasticsearch']['index_name']
+                
+                if es_client.indices.exists(index=index_name):
+                    es_client.indices.delete(index=index_name)
+                    logger.info(f"Deleted existing index '{index_name}'")
+                
+                # Create new index
+                if not utils.create_song_index(index_name):
+                    status_container.error("❌ Failed to create index")
+                else:
+                    # Load demo data with progress callback
+                    successful, failed = utils.load_demo_data(
+                        index_name=index_name,
+                        progress_callback=update_progress
+                    )
+                    
+                    # Clear progress displays
+                    progress_container.empty()
+                    
                     if successful > 0:
-                        st.success(f"✅ Successfully indexed {successful} songs!")
+                        status_container.success(f"✅ Index initialized successfully! Indexed {successful} songs.")
                         if failed > 0:
                             st.warning(f"⚠️ {failed} songs failed to index.")
                     else:
-                        st.error("❌ No songs were indexed. Check if the index exists and data is available.")
-                except Exception as e:
-                    st.error(f"❌ Error loading data: {str(e)}")
-                st.rerun()
-    
-    with col3:
-        if st.button("Delete Index", use_container_width=True, type="secondary", disabled=not UTILS_AVAILABLE):
-            with st.spinner("Deleting Elasticsearch index..."):
-                try:
-                    if utils.delete_song_index():
-                        st.success("✅ Elasticsearch index deleted successfully!")
-                    else:
-                        st.warning("Index does not exist or could not be deleted.")
-                except Exception as e:
-                    st.error(f"❌ Error deleting index: {str(e)}")
-                st.rerun()
+                        status_container.error("❌ Failed to initialize index or load data. Check logs for details.")
+                    
+                    # Wait a moment before rerunning to show the final message
+                    time.sleep(2)
+                    st.rerun()
+                    
+            except Exception as e:
+                status_container.error(f"❌ Error during initialization: {str(e)}")
+                logger.error(f"Initialization error: {str(e)}", exc_info=True)
     
     st.markdown("<div style='margin-bottom: 1rem;'></div>", unsafe_allow_html=True)
     
@@ -957,49 +938,7 @@ elif st.session_state.current_page == 'add_song':
             elif not song_file:
                 st.error("Song File is required!")
             else:
-                # Check file size (20 MB limit)
-                max_size = 20 * 1024 * 1024
-                if song_file.size > max_size:
-                    st.error(f"File size ({song_file.size / (1024 * 1024):.1f} MB) exceeds the 20 MB limit. Please upload a smaller file.")
-                else:
-                    try:
-                        # Create dataset directory if it doesn't exist
-                        dataset_path = Path("dataset")
-                        dataset_path.mkdir(exist_ok=True)
-                        
-                        # Generate filename
-                        file_extension = song_file.name.split('.')[-1]
-                        safe_song_name = song_name.strip()
-                        filename = f"{safe_song_name}.{file_extension}"
-                        
-                        # Save the audio file
-                        file_path = dataset_path / filename
-                        with open(file_path, "wb") as f:
-                            f.write(song_file.getbuffer())
-                        
-                        # Update SONG_METADATA dictionary (in-memory only for this session)
-                        # In a real app, you'd save this to a database or JSON file
-                        metadata = {
-                            "title": safe_song_name,
-                            "description": f"A beautiful song",
-                            "composer": music_director.strip()
-                        }
-                        
-                        # Add optional fields if provided
-                        if genre and genre.strip():
-                            metadata["genre"] = genre.strip()
-                        if album and album.strip():
-                            metadata["album"] = album.strip()
-                        if lyrics and lyrics.strip():
-                            metadata["lyrics"] = lyrics.strip()
-                        
-                        SONG_METADATA[filename] = metadata
-                        
-                        st.success(f"✅ Song '{song_name}' has been added successfully!")
-                        st.info("Navigate to 'All Songs' to see your newly added song.")
-                        
-                    except Exception as e:
-                        st.error(f"Error saving song: {str(e)}")
+                str.info("The 'Add New Song' feature is coming soon! Stay tuned.")
 
 # Footer
 st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
@@ -1014,3 +953,18 @@ st.markdown("""
         </a>
     </div>
 """, unsafe_allow_html=True)
+
+# Check Elasticsearch connection after page renders (non-blocking)
+# This happens at the end so the page loads first
+if UTILS_AVAILABLE and st.session_state.es_connected is None:
+    check_es_connection()
+    # Update the status placeholder with the result
+    if st.session_state.es_connected is True:
+        status_placeholder.success("✅ Connected to Elasticsearch successfully!")
+        # Clear the message after showing it
+        time.sleep(2)
+        status_placeholder.empty()
+    elif st.session_state.es_connected is False:
+        status_placeholder.error(f"❌ Failed to connect to Elasticsearch: {st.session_state.es_connection_error}")
+    # Trigger a rerun to enable the button
+    st.rerun()
