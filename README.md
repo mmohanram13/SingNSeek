@@ -1,347 +1,289 @@
-# SingN'Seek 🎵
+# SingN'Seek
 
-A powerful multimodal song search application that enables searching songs by text (lyrics, metadata) and audio (humming, recordings) using **Elasticsearch** and **Google Vertex AI**.
+**Can't remember the song? Just hum, type, or guess — we'll find it!**
 
-## 🎯 Features
+📺 **[Watch Demo on YouTube](https://www.youtube.com/watch?v=JCv2n1I46uA)**
 
-- **Multimodal Search**: Search by typing lyrics, composer, or upload/record audio
-- **Hybrid Search**: Combines BM25 (text) and vector similarity (embeddings) for best results
-- **Audio Embeddings**: Uses MuQ-large-msd-iter model for audio fingerprinting
-- **Text Embeddings**: Vertex AI for semantic text understanding
-- **Real-time Search**: Instant results with relevance scoring
-- **Elasticsearch Backend**: Scalable indexing and retrieval
-- **Beautiful UI**: Clean, intuitive Streamlit interface
+A multimodal song search application that finds music through text (lyrics, metadata, natural language) and audio (humming, recordings) using Elasticsearch, Google Vertex AI, and OpenMuQ embeddings.
 
 ---
 
-## 🚀 Quick Setup
+## ✨ Key Features
 
-### Prerequisites
+**Multimodal Search**
+- Text search: song name, lyrics, composer, artist, genre, album
+- Natural language queries: "pop songs by voiceofruthie about apocalypse"
+- Audio search: upload files or record humming/singing
+- Hybrid search: combine text AND audio queries for maximum precision (e.g., "pop songs" + humming sample)
+- Hybrid scoring: combines BM25 keyword matching with vector similarity
 
-- Python 3.9 or higher
-- pip (Python package manager)
-- 2GB+ free disk space
-- Docker (for Elasticsearch)
+**Intelligent Processing**
+- Query Vetter powered by Gemini 2.5 Flash Lite parses natural language into structured queries
+- Automatic field detection and filtering (composer, artist, genre, album)
+- Lyrics-aware search with semantic matching and higher relevance scoring
+- Fuzzy matching for typos and variations
 
-### Installation Steps
+**Technical Stack**
+- Elasticsearch for production-ready search infrastructure
+- Google Vertex AI text-embedding-005 (768-dim vectors)
+- OpenMuQ MuQ-large-msd-iter (1024-dim audio vectors)
+- Streamlit UI
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/mmohanram13/singnseek.git
-   cd singnseek
-   ```
+---
 
-2. **Create virtual environment**:
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate  # macOS/Linux
-   # OR: .venv\Scripts\activate  # Windows
-   ```
+## 🔍 How It's Different from Shazam
 
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+**Shazam: Audio Fingerprinting**
+- Creates unique "fingerprints" from spectrogram peaks
+- Fast and accurate for exact recording matches
+- ❌ Requires exact recording in database
+- ❌ Can't match covers, remixes, or variations
+- ❌ Fails with humming/singing
+- ❌ Audio-only queries
 
-4. **Setup Elasticsearch**:
-   
-   Start Elasticsearch with Docker:
-   ```bash
-   curl -fsSL https://elastic.co/start-local | sh
-   ```
-   
-   This starts:
-   - Elasticsearch at http://localhost:9200
-   - Kibana at http://localhost:5601
-   - Default credentials: `elastic` / `changeme`
-
-5. **Configure the application**:
-   
-   Update `config.yaml` with your Elasticsearch credentials:
-   ```yaml
-   elasticsearch:
-     host: "localhost"
-     port: 9200
-     scheme: "http"
-     username: "elastic"
-     password: "changeme"
-   ```
-
-6. **Run the application**:
-   ```bash
-   streamlit run main.py
-   ```
-   
-   The app will open at `http://localhost:8501`
-
-7. **Initialize the database**:
-   - Click **"Manage"** tab
-   - Click **"Create Index"** button
-   - Click **"Load Demo Data"** button (takes 2-5 minutes)
-   - Wait for success message
+**SingN'Seek: Semantic + Multimodal**
+- Semantic embeddings capture musical features
+- ✅ Matches similar songs, covers, and variations
+- ✅ Works with humming, singing, partial audio
+- ✅ Supports text and natural language queries
+- ✅ Understands relationships: _"songs about love"_
+- ✅ Ideal for discovery and exploration
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                    Streamlit UI (main.py)                   │
-│  - Home (Search Interface)                                  │
-│  - All Songs (Browse)                                       │
-│  - Manage (Index Management)                                │
-└──────────────────────┬─────────────────────────────────────┘
-                       │
-                       ▼
-┌────────────────────────────────────────────────────────────┐
-│                 Utility Layer (utils.py)                    │
-│  - ElasticsearchClient (connection & operations)            │
-│  - EmbeddingGenerator (audio & text embeddings)             │
-│  - Search Functions (hybrid scoring)                        │
-│  - Index Management (create, delete, load)                  │
-└──────────────┬──────────────────────┬──────────────────────┘
-               │                      │
-               ▼                      ▼
-┌──────────────────────┐    ┌──────────────────────┐
-│   Elasticsearch      │    │    Vertex AI         │
-│   - Vector Search    │    │    - Text Embeddings │
-│   - BM25 Search      │    │    - Re-ranking      │
-│   - Index Storage    │    │    (text-embed-004)  │
-└──────────────────────┘    └──────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Audio Embeddings                          │
-│                MuQ-large-msd-iter Model                      │
-│                (512-dimensional vectors)                     │
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│              Streamlit UI (main.py)                 │
+│  Home | All Songs | Manage                          │
+└───────────────────┬─────────────────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────────────────┐
+│           Core Logic (utils.py)                     │
+│  ElasticsearchClient | EmbeddingGenerator           │
+│  Query Vetter | Search | Index Management           │
+└────────┬────────────────────┬───────────────────────┘
+         │                    │
+         ▼                    ▼
+┌──────────────────┐   ┌────────────────────────────┐
+│  Elasticsearch   │   │    Google Vertex AI        │
+│  - Vector KNN    │   │  - Text Embeddings         │
+│  - BM25 Search   │   │  - Gemini Query Parser     │
+└──────────────────┘   └────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────┐
+│         OpenMuQ Audio Embeddings                    │
+│   MuQ-large-msd-iter (1024-dim vectors)             │
+└─────────────────────────────────────────────────────┘
 ```
 
-### Key Components
+**Indexing**: CSV → Parse Metadata → Generate Embeddings (Text + Audio) → Index to Elasticsearch
 
-#### 1. **utils.py** - Backend Logic
-- `ElasticsearchClient`: Manages ES connections (local & cloud)
-- `EmbeddingGenerator`: Generates audio (MuQ) & text (Vertex AI) embeddings
-- `create_song_index()`: Creates ES index with vector mappings
-- `load_demo_data()`: Indexes songs with embeddings
-- `search_songs()`: Hybrid search combining BM25 + vector similarity
+**Search**: User Query → Parse/Embed → Hybrid Search (BM25 + Vector KNN) → Ranked Results
 
-#### 2. **main.py** - User Interface
-- **Home**: Search interface (text + audio upload + recording)
-- **All Songs**: Browse complete collection
-- **Manage**: Index management (create, load, delete)
+---
 
-#### 3. **Data Flow**
+## 🤖 Models Used
 
-**Indexing Process:**
+### OpenMuQ (MuQ-large-msd-iter)
+- **Purpose**: Audio embedding generation for semantic music understanding
+- **Architecture**: ~300M parameters, self-supervised learning on Million Song Dataset
+- **Output**: 1024-dimensional vectors from 24 kHz audio
+- **Advantages**: Captures melody, rhythm, timbre, mood; works with humming/covers; SOTA on MARBLE Benchmark
+- **Paper**: [arxiv.org/abs/2501.01108](https://arxiv.org/abs/2501.01108) | **HuggingFace**: [OpenMuQ/MuQ-large-msd-iter](https://huggingface.co/OpenMuQ/MuQ-large-msd-iter)
+
+### Vertex AI text-embedding-005
+- **Purpose**: Text embedding for semantic text understanding
+- **Output**: 768-dimensional text embeddings
+- **Advantages**: High-quality semantic representations, multi-language support, production-ready
+
+### Gemini 2.5 Flash Lite
+- **Purpose**: Natural language query parsing
+- **Task**: Parse conversational queries into structured Elasticsearch filters
+- **Latency**: ~200-500ms | **Temperature**: 0.1 (deterministic)
+
+---
+
+## 🚀 Setup Instructions
+
+### Prerequisites
+- Python 3.13+, pip package manager
+- Elasticsearch (local or cloud)
+- Google Cloud account with Vertex AI enabled
+
+### Quick Start
+
+**1. Clone and Setup**
+```bash
+git clone https://github.com/mmohanram13/singnseek.git
+cd singnseek
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
-CSV Data → Load Metadata → Generate Text Embeddings (Vertex AI)
-                        → Load Audio → Generate Audio Embeddings (MuQ)
-                        → Combine → Index to Elasticsearch
+
+**2. Setup Elasticsearch**
+
+For local Elasticsearch:
+```bash
+curl -fsSL https://elastic.co/start-local | sh
+```
+This will provide you with an API key. Runs at `http://localhost:9200`
+
+Alternatively, use [Elastic Cloud](https://cloud.elastic.co/) and get your Cloud URL and API key.
+
+**3. Authenticate with Google Cloud**
+```bash
+gcloud auth login
+gcloud config set project your-project-id
 ```
 
-**Search Process:**
+**4. Configure Application**
+
+Create `.env` file:
+```bash
+# Elasticsearch
+ELASTICSEARCH_URL=http://localhost:9200
+ELASTICSEARCH_API_KEY=your-api-key
+
+# Google Cloud / Vertex AI
+GOOGLE_CLOUD_PROJECT=your-project-id
+GOOGLE_CLOUD_REGION=asia-south1
+VERTEX_AI_REGION=us-central1
 ```
-User Query → Text Embedding (Vertex AI) + Audio Embedding (MuQ)
-          → Elasticsearch Hybrid Search (BM25 + Vector Similarity)
-          → Score & Rank Results → Display
+
+Edit `src/config/config.yaml` for additional settings (optional).
+
+**5. Run Application**
+```bash
+streamlit run src/main.py
+```
+Opens at `http://localhost:8501`
+
+**6. Initialize Database**
+- Go to **Manage** tab
+- Click **Create Index**
+- Click **Load Demo Data** (takes 2-5 minutes). For the first time, the MuQ model gets downloaded in the backend, which might take additional time to complete.
+
+---
+
+## ⚙️ Configuration
+
+Key settings in `src/config/config.yaml`:
+
+```yaml
+elasticsearch:
+  index_name: singnseek
+  timeout: 30
+
+embeddings:
+  audio_dims: 1024    # MuQ model
+  text_dims: 768      # Vertex AI
+
+search:
+  hybrid_alpha: 0.6   # 60% text, 40% audio weighting
+  top_k: 5
+
+muq:
+  model: OpenMuQ/MuQ-large-msd-iter
+  sample_rate: 24000
+
+vertex_ai:
+  text_embedding_model: text-embedding-005
+  gemini_model: gemini-2.5-flash-lite
 ```
 
 ---
 
 ## 📖 Usage
 
-### Text Search
-1. Navigate to **Home** tab
-2. Enter search terms (song name, composer, lyrics)
-3. Click **Search** button
-4. Results show with relevance scores
+**Text Search**
+- Enter queries: song name, lyrics, artist, genre, natural language
+- Examples: `"Best Thing"`, `"lyrics about love"`, `"pop songs by voiceofruthie"`
 
-### Audio Search
-1. Navigate to **Home** tab
-2. **Option A**: Upload audio file (.wav, max 20MB)
-3. **Option B**: Click **Record Audio** to record using your microphone
-4. Click **Search** button
-5. Results show audio similarity scores
+**Audio Search**
+- Upload `.wav` file (max 20MB, 24 kHz recommended)
+- OR click **Record Audio** to hum/sing using your microphone
 
-### Browse All Songs
-1. Navigate to **All Songs** tab
-2. View complete collection with metadata
-3. Play audio samples directly
+**Hybrid Search (Text + Audio)**
+- Combine text and audio queries for more precise results
+- Enter a text query AND upload/record audio simultaneously
+- The system combines both signals with configurable weighting (default: 60% text, 40% audio)
+- **Use Cases**:
+  - Find a specific song when you remember partial lyrics and can hum the tune
+  - Narrow down results by genre/artist while providing audio sample
+  - Search for covers or versions by combining text filters with audio similarity
+- **Example**: Type `"pop songs"` and upload a humming sample to find pop songs similar to your tune
 
-### Manage Index
-1. Navigate to **Manage** tab
-2. Create new index, load demo data, or delete index
-3. View index statistics and health
+**Browse Songs**
+- Navigate to **All Songs** tab to view complete collection
 
----
-
-## ⚙️ Configuration
-
-### config.yaml
-
-Static configuration for the application:
-
-```yaml
-elasticsearch:
-  index_name: singnseek
-  timeout: 30
-  max_retries: 3
-
-embeddings:
-  audio_dims: 1024    # MuQ model output
-  text_dims: 768     # Vertex AI embedding dimensions
-
-search:
-  hybrid_alpha: 0.6  # 60% text, 40% audio weighting
-  top_k: 10          # Number of results to return
-  rerank_top_k: 20   # Candidates for reranking
-
-muq:
-  model: OpenMuQ/MuQ-large-msd-iter
-  sample_rate: 24000
-```
-
-### Environment Variables
-
-For sensitive credentials, use environment variables:
-
-- `ELASTICSEARCH_URL`: Elasticsearch URL (default: http://localhost:9200)
-- `ELASTICSEARCH_API_KEY`: Your ElasticSearch API key
-- `GOOGLE_CLOUD_PROJECT`: Your GCP project ID (for Vertex AI)
+**Manage Index**
+- **Manage** tab: create, load, or delete index
 
 ---
 
-## 🐳 Docker Deployment
+## 🧠 Query Vetter (Natural Language Processing)
 
-### Using Docker Compose
+Powered by Gemini 2.5 Flash Lite, the Query Vetter parses conversational queries into structured Elasticsearch filters.
 
-1. **Build and run**:
-   ```bash
-   docker-compose up --build
-   ```
+**Features**
+- **Field-Specific Filtering**: Extracts composer, artist, genre, album filters automatically
+- **Lyrics-Aware Search**: Detects lyrics queries and applies semantic hybrid search
+- **Combined Filtering**: Handles multi-constraint queries like _"pop songs by voiceofruthie about apocalypse"_
 
-2. **Access the application**:
-   Open `http://localhost:8501`
+**Examples**
 
-3. **Stop**:
-   ```bash
-   docker-compose down
-   ```
+| Query | Parsed Result |
+|-------|---------------|
+| `"song with composer AiCanvas"` | Filters: `{composer: "AiCanvas"}` |
+| `"lyrics about love"` | Search: `"love"`, Type: `lyrics`, Hybrid: `true` |
+| `"pop songs by voiceofruthie about apocalypse"` | Filters: `{genre: "Pop", singers: "voiceofruthie"}`, Search: `"apocalypse"` |
 
-### Using Docker Directly
-
-1. **Build**:
-   ```bash
-   docker build -t singnseek:latest .
-   ```
-
-2. **Run**:
-   ```bash
-   docker run -p 8501:8501 --name singnseek-app singnseek:latest
-   ```
-
-3. **Stop**:
-   ```bash
-   docker stop singnseek-app
-   docker rm singnseek-app
-   ```
+Implementation: `src/utils/query_vetter.py`
 
 ---
 
-## 🧪 Testing
+## 📝 Query Samples
 
-Run tests to verify functionality:
+**Text Queries**
+- Basic: `"Best Thing"`, `"apocalypse"`, `"hollow"`
+- Field-specific: `"song with composer AiCanvas"`, `"songs by voiceofruthie"`, `"pop songs"`
+- Lyrics: `"lyrics about love"`, `"songs with apocalypse in the lyrics"`
+- Combined: `"pop songs by voiceofruthie about apocalypse"`
+- Natural language: `"find me some sad songs"`, `"energetic pop tracks"`
 
-```bash
-# Test Elasticsearch connection
-python -c "from utils import ElasticsearchClient; client = ElasticsearchClient(); print('Connected:', client.ping())"
+**Audio Queries**
+- Upload or record: humming, singing, instrument playing, any audio snippet
 
-# Test audio embeddings
-python muq_test.py
+**Hybrid Queries (Text + Audio)**
+- Genre + Audio: Type `"pop songs"` + upload humming → finds pop songs similar to the melody
+- Artist + Audio: Type `"songs by voiceofruthie"` + record singing → finds artist's songs matching the tune
+- Lyrics + Audio: Type `"lyrics about love"` + upload audio → finds love songs with similar musical features
+- Filters + Audio: Type `"song with composer AiCanvas"` + record humming → finds composer's songs matching the melody
+- Natural language + Audio: Type `"energetic tracks"` + upload sample → finds high-energy songs with similar sound
 
-# Full application test
-streamlit run main.py
-```
-
----
-
-## 📊 Project Structure
-
-```
-singnseek/
-├── main.py                  # Streamlit UI application
-├── utils.py                 # Backend utilities and logic
-├── config.yaml              # Static configuration
-├── requirements.txt         # Python dependencies
-├── Dockerfile               # Docker image definition
-├── docker-compose.yml       # Docker Compose configuration
-├── muq_test.py             # Audio embedding tests
-├── mp3_to_wav_converter.py # Audio format converter
-├── dataset/                # Song dataset
-└── images/                 # UI assets
-```
-
----
-
-## 🛠️ Troubleshooting
-
-### Elasticsearch Connection Issues
-- Verify Elasticsearch is running: `curl http://localhost:9200`
-- Check credentials in `config.yaml`
-- Ensure port 9200 is not blocked
-
-### Audio Embedding Errors
-- Verify audio files are in WAV format
-- Check sample rate is 24kHz
-- Ensure MuQ model is downloaded (auto-downloads on first run)
-
-### Memory Issues
-- Reduce batch size in `load_demo_data()`
-- Use CPU instead of GPU if VRAM is limited
-- Close other applications
-
-### Search Returns No Results
-- Verify index is created and loaded
-- Check index stats in Manage tab
-- Try broader search terms
-
----
-
-## 👤 Author
-
-**Mohan Ram**
-- GitHub: [@mmohanram13](https://github.com/mmohanram13)
-- Email: mmohanram13@gmail.com
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License.
+**Why Use Hybrid Search?**
+- **More Precision**: Combines semantic understanding of text with musical similarity from audio
+- **Better Disambiguation**: When multiple songs match text, audio narrows down to the right one
+- **Flexible Discovery**: Find songs that match both conceptual criteria (genre, mood) and sonic characteristics
 
 ---
 
 ## 🙏 Acknowledgments
 
-- **Elasticsearch** for powerful search capabilities
-- **Google Vertex AI** for text embeddings
-- **OpenMuQ** for audio embedding model (MuQ-large-msd-iter)
-- **Streamlit** for the intuitive UI framework
-- **Dataset Contributors** for royalty-free music samples
+- **Elasticsearch** - Search infrastructure
+- **Google Vertex AI** - Text embeddings and language models
+- **Tencent AI Lab** - OpenMuQ audio embedding model
+- **Streamlit** - UI framework
+- **HuggingFace** - Model hosting
 
 ---
 
-## 🚀 Future Enhancements
+## 🔗 References
 
-- [ ] Add more audio formats support (MP3, FLAC)
-- [ ] Implement user authentication
-- [ ] Add playlist creation features
-- [ ] Support for real-time streaming search
-- [ ] Multi-language lyrics support
-- [ ] Advanced filtering (genre, year, duration)
-- [ ] Export search results
-
----
-
-For issues, feature requests, or contributions, please visit the [GitHub repository](https://github.com/mmohanram13/singnseek)
+- [MuQ Paper](https://arxiv.org/abs/2501.01108) | [OpenMuQ HuggingFace](https://huggingface.co/OpenMuQ)
+- [Elasticsearch Docs](https://www.elastic.co/guide/index.html) | [Vertex AI Docs](https://cloud.google.com/vertex-ai/docs)
