@@ -8,11 +8,13 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PATH="/app/.venv/bin:$PATH"
 
-# Install system dependencies
+# Install system dependencies (including jq for .env parsing if needed)
 RUN apt-get update && apt-get install -y \
     curl \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file
@@ -22,8 +24,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
-COPY main.py .
-COPY .streamlit .streamlit/
+COPY src/ src/
+COPY .streamlit/ .streamlit/
 COPY images/ images/
 COPY dataset/ dataset/
 
@@ -34,4 +36,4 @@ EXPOSE 8501
 HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health || exit 1
 
 # Run Streamlit app
-CMD ["streamlit", "run", "main.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "src/main.py", "--server.port=8501", "--server.address=0.0.0.0"]

@@ -189,7 +189,7 @@ elasticsearch:
   max_retries: 3
 
 embeddings:
-  audio_dims: 512    # MuQ model output
+  audio_dims: 1024    # MuQ model output
   text_dims: 768     # Vertex AI embedding dimensions
 
 search:
@@ -206,8 +206,7 @@ muq:
 
 For sensitive credentials, use environment variables:
 
-- `ELASTICSEARCH_HOST`: Elasticsearch host (default: localhost)
-- `ELASTICSEARCH_PORT`: Elasticsearch port (default: 9200)
+- `ELASTICSEARCH_URL`: Elasticsearch URL (default: http://localhost:9200)
 - `ELASTICSEARCH_API_KEY`: Your ElasticSearch API key
 - `GOOGLE_CLOUD_PROJECT`: Your GCP project ID (for Vertex AI)
 
@@ -280,8 +279,6 @@ singnseek/
 ├── muq_test.py             # Audio embedding tests
 ├── mp3_to_wav_converter.py # Audio format converter
 ├── dataset/                # Song dataset
-│   ├── copyright/
-│   └── royalty_free/
 └── images/                 # UI assets
 ```
 
