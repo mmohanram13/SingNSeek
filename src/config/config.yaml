@@ -56,7 +56,8 @@ muq:
 
 vertex_ai:
   text_embedding_model: text-embedding-005
-  rerank_model: gemini-1.5-flash-002
+  # Gemini model for query vetting (natural language parsing)
+  gemini_model: gemini-2.5-flash-lite
 
 # ============================================================================
 # LOGGING CONFIGURATION
@@ -86,4 +87,4 @@ ui:
   enable_save_song: false
   
   # Enable/disable the Initialize and Load Demo Data button
-  enable_initialize_data: true
+  enable_initialize_data: false
