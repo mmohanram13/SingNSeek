@@ -6,6 +6,7 @@ import base64
 from pathlib import Path
 import tempfile
 import yaml
+from audio_recorder_streamlit import audio_recorder
 
 # Page configuration (must be first Streamlit command)
 st.set_page_config(
@@ -103,16 +104,23 @@ st.markdown("""
         line-height: 1.5 !important;
     }
     /* Audio recorder component styling */
-    .audio-recorder-container {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        padding: 1rem 0;
+    .st-key-audio-recorder-container {
+        display: flex !important;
+        justify-content: center !important;
+        align-items: center !important;
+        width: 100% !important;
+        min-height: 50px !important;
+        padding: 1rem 0 !important;
     }
-    /* Center the audio recorder */
+    /* Center the audio recorder iframe */
     iframe[title="audio_recorder_streamlit.audio_recorder"] {
-        display: block;
-        margin: 0 auto;
+        display: flex !important;
+        justify-content: center !important;
+        align-items: center !important;
+        width: 350px !important;
+        height: 50px !important;
+        margin: 0 auto !important;
+        border: none !important;
     }
     /* Lyrics preview styling */
     .lyrics-preview {
@@ -393,175 +401,22 @@ if st.session_state.current_page == 'home':
                 st.audio(audio_file)
 
     with audio_tab2:
-        # Load and encode button images
-        def get_image_base64(image_path):
-            with open(image_path, "rb") as img_file:
-                return base64.b64encode(img_file.read()).decode()
-        
-        record_btn_b64 = get_image_base64("images/record-button.png")
-        stop_btn_b64 = get_image_base64("images/stop-button.png")
-        
-        # Native HTML5 Audio Recorder
-        recorded_audio = st.components.v1.html(f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <style>
-                body {{
-                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                    display: flex;
-                    flex-direction: column;
-                    align-items: center;
-                    justify-content: center;
-                    padding: 10px;
-                    margin: 0;
-                }}
-                #instruction {{
-                    font-size: 14px;
-                    color: #555;
-                    margin-bottom: 10px;
-                    font-weight: 500;
-                }}
-                #recordButton {{
-                    width: 80px;
-                    height: 80px;
-                    border: none;
-                    background: transparent;
-                    cursor: pointer;
-                    transition: all 0.3s ease;
-                    padding: 0;
-                }}
-                #recordButton:hover {{
-                    transform: scale(1.05);
-                }}
-                #recordButton:active {{
-                    transform: scale(0.95);
-                }}
-                #recordButton img {{
-                    width: 100%;
-                    height: 100%;
-                    object-fit: contain;
-                }}
-                #recordButton.recording img {{
-                    animation: pulse 1.5s infinite;
-                }}
-                @keyframes pulse {{
-                    0%, 100% {{ opacity: 1; }}
-                    50% {{ opacity: 0.7; }}
-                }}
-                #audioPreview {{
-                    margin-top: 10px;
-                    display: none;
-                    width: 100%;
-                    max-width: 400px;
-                }}
-                .status-message {{
-                    margin-top: 5px;
-                    font-size: 13px;
-                    color: #28a745;
-                }}
-            </style>
-        </head>
-        <body>
-            <div id="instruction">Click to start recording</div>
-            <button id="recordButton">
-                <img id="buttonIcon" src="data:image/png;base64,{record_btn_b64}" alt="Record">
-            </button>
-            <audio id="audioPreview" controls></audio>
-            <div id="statusMessage" class="status-message"></div>
-            
-            <script>
-                let mediaRecorder;
-                let audioChunks = [];
-                let isRecording = false;
-                
-                const recordButton = document.getElementById('recordButton');
-                const buttonIcon = document.getElementById('buttonIcon');
-                const instruction = document.getElementById('instruction');
-                const audioPreview = document.getElementById('audioPreview');
-                const statusMessage = document.getElementById('statusMessage');
-                
-                const recordIcon = "data:image/png;base64,{record_btn_b64}";
-                const stopIcon = "data:image/png;base64,{stop_btn_b64}";
-                
-                recordButton.addEventListener('click', async () => {{
-                    if (!isRecording) {{
-                        try {{
-                            const stream = await navigator.mediaDevices.getUserMedia({{ audio: true }});
-                            mediaRecorder = new MediaRecorder(stream);
-                            audioChunks = [];
-                            
-                            mediaRecorder.ondataavailable = (event) => {{
-                                audioChunks.push(event.data);
-                            }};
-                            
-                            mediaRecorder.onstop = async () => {{
-                                const audioBlob = new Blob(audioChunks, {{ type: 'audio/wav' }});
-                                const audioUrl = URL.createObjectURL(audioBlob);
-                                audioPreview.src = audioUrl;
-                                audioPreview.style.display = 'block';
-                                
-                                // Convert blob to base64 and send to Streamlit
-                                const reader = new FileReader();
-                                reader.readAsDataURL(audioBlob);
-                                reader.onloadend = () => {{
-                                    const base64Audio = reader.result.split(',')[1];
-                                    window.parent.postMessage({{
-                                        type: 'streamlit:setComponentValue',
-                                        data: base64Audio
-                                    }}, '*');
-                                    statusMessage.textContent = 'Recording captured successfully!';
-                                }};
-                                
-                                // Stop all tracks
-                                stream.getTracks().forEach(track => track.stop());
-                            }};
-                            
-                            mediaRecorder.start();
-                            isRecording = true;
-                            recordButton.classList.add('recording');
-                            buttonIcon.src = stopIcon;
-                            instruction.textContent = 'Click to stop recording';
-                            instruction.style.color = '#de1212';
-                            audioPreview.style.display = 'none';
-                            statusMessage.textContent = '';
-                        }} catch (err) {{
-                            alert('Error accessing microphone: ' + err.message);
-                        }}
-                    }} else {{
-                        mediaRecorder.stop();
-                        isRecording = false;
-                        recordButton.classList.remove('recording');
-                        buttonIcon.src = recordIcon;
-                        instruction.textContent = 'Click to start recording';
-                        instruction.style.color = '#555';
-                    }}
-                }});
-            </script>
-        </body>
-        </html>
-        """, height=180)
-        
-        # Handle the recorded audio - check if it's a valid string (not DeltaGenerator)
-        if recorded_audio and isinstance(recorded_audio, str) and recorded_audio.strip():
-            try:
-                # Decode base64 audio
-                audio_data = base64.b64decode(recorded_audio)
-                
-                # Check recording size (200 MB = 200 * 1024 * 1024 bytes)
-                max_size = 200 * 1024 * 1024
-                if len(audio_data) > max_size:
-                    st.error(f"Recording size ({len(audio_data) / (1024 * 1024):.1f} MB) exceeds the 200 MB limit. Please record a shorter audio clip.")
-                    st.session_state.audio_bytes = None
-                else:
-                    # Only update if it's a new recording
-                    if st.session_state.audio_bytes != audio_data:
-                        st.session_state.audio_bytes = audio_data
-                        st.success("Recording ready for search!")
-                        st.audio(audio_data, format='audio/wav')
-            except Exception as e:
-                # Silently ignore decoding errors on initial render
-                pass
+        # Use Streamlit audio recorder component
+        audio_bytes = audio_recorder(
+            pause_threshold=5.0,
+            text="Click the mic icon to start/stop recording",
+            recording_color="#ff4b4b",
+            neutral_color="#31333f",
+            icon_name="microphone-lines",
+            icon_size="2x",
+            auto_start=False,
+            key="audio-recorder-container"
+        )
+        if audio_bytes:
+            # Store the recorded audio in session state
+            st.session_state.audio_bytes = audio_bytes
+            st.session_state.audio_file = None  # Clear any uploaded file
+            st.audio(audio_bytes, format="audio/wav")
 
     # Get the current audio inputs from session state
     if not audio_file:
