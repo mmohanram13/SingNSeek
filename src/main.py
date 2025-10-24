@@ -716,7 +716,16 @@ elif st.session_state.current_page == 'add_song':
         try:
             stats = utils.get_index_stats()
             if stats.get('exists'):
-                st.info(f"📊 Index Status: **Active** | Documents: **{stats.get('doc_count', 0)}** | Size: **{stats.get('size_readable', 'N/A')}**")
+                # Build status message
+                status_parts = [
+                    f"📊 Index Status: **Active**",
+                    f"Documents: **{stats.get('doc_count', 0)}**"
+                ]
+                # Only add size if available (not serverless mode)
+                if 'size_readable' in stats:
+                    status_parts.append(f"Size: **{stats.get('size_readable')}**")
+                
+                st.info(" | ".join(status_parts))
             else:
                 st.warning("⚠️ Elasticsearch index does not exist. Click below to initialise and enable search.")
         except Exception as e:
@@ -727,10 +736,11 @@ elif st.session_state.current_page == 'add_song':
     st.markdown("<div style='margin-bottom: 1rem;'></div>", unsafe_allow_html=True)
     
     # Elasticsearch Index Management Button
+    initialize_enabled = CONFIG.get('ui', {}).get('enable_initialize_data', True) and UTILS_AVAILABLE
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        if st.button("Initialize and Load Demo Data", use_container_width=True, type="primary", disabled=not UTILS_AVAILABLE):
+        if st.button("Initialize and Load Demo Data", use_container_width=True, type="primary", disabled=not initialize_enabled):
             # Create placeholders for progress display
             progress_container = st.empty()
             status_container = st.empty()
@@ -778,6 +788,15 @@ elif st.session_state.current_page == 'add_song':
             except Exception as e:
                 status_container.error(f"❌ Error during initialization: {str(e)}")
                 logger.error(f"Initialization error: {str(e)}", exc_info=True)
+    
+    # Show disabled message if button is disabled
+    if not initialize_enabled:
+        with col2:
+            st.markdown("""
+                <div style='text-align: center; color: #999; font-size: 0.85rem; margin-top: 0.5rem; line-height: 1.4; margin-bottom: 1rem;'>
+                    * Disabled for demo due to high compute usage. Follow the GitHub repo link to host it locally and enable it.
+                </div>
+            """, unsafe_allow_html=True)
     
     st.markdown("<div style='margin-bottom: 1rem;'></div>", unsafe_allow_html=True)
     

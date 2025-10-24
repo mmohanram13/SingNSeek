@@ -75,7 +75,7 @@ logging:
   elasticsearch:
     enabled: true
     index_name: singnseek-logs
-    index_frequency: daily  # daily, weekly, monthly, yearly
+    index_frequency: monthly  # daily, weekly, monthly, yearly
 
 # ============================================================================
 # UI FEATURES CONFIGURATION
@@ -83,4 +83,7 @@ logging:
 
 ui:
   # Enable/disable the Save Song button in Add New Song page
-  enable_save_song: true
+  enable_save_song: false
+  
+  # Enable/disable the Initialize and Load Demo Data button
+  enable_initialize_data: false

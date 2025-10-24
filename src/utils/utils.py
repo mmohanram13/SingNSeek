@@ -369,12 +369,19 @@ def create_song_index(index_name: Optional[str] = None) -> bool:
                     "similarity": "cosine"
                 }
             }
-        },
-        "settings": {
+        }
+    }
+    
+    # Add settings only for localhost (not for serverless deployments)
+    es_url = os.getenv('ELASTICSEARCH_URL', 'http://localhost:9200')
+    if 'localhost' in es_url.lower() or '127.0.0.1' in es_url:
+        mapping["settings"] = {
             "number_of_shards": 1,
             "number_of_replicas": 0
         }
-    }
+        logger.info("Using localhost Elasticsearch - adding shard/replica settings")
+    else:
+        logger.info("Using cloud/serverless Elasticsearch - skipping shard/replica settings")
     
     try:
         es_client.indices.create(index=index_name, body=mapping)
@@ -976,6 +983,7 @@ def rerank_with_vertex_ai(query: str, results: List[Dict], top_k: int = 10) -> L
 def get_index_stats(index_name: Optional[str] = None) -> Dict:
     """
     Get statistics about the index.
+    Compatible with both traditional and serverless Elasticsearch.
     
     Args:
         index_name: Name of the index
@@ -987,6 +995,8 @@ def get_index_stats(index_name: Optional[str] = None) -> Dict:
         index_name = CONFIG['elasticsearch']['index_name']
     
     es_client = get_es_client().get_client()
+    es_url = os.getenv('ELASTICSEARCH_URL', 'http://localhost:9200')
+    is_serverless = 'localhost' not in es_url.lower() and '127.0.0.1' not in es_url
     
     try:
         # Check if index exists
@@ -998,28 +1008,37 @@ def get_index_stats(index_name: Optional[str] = None) -> Dict:
                 "index_name": index_name
             }
         
-        # Get index stats
-        stats = es_client.indices.stats(index=index_name)
+        # Get document count (available in both modes)
         count_response = es_client.count(index=index_name)
         
-        # Get size in bytes and format it
-        size_bytes = stats['_all']['primaries']['store']['size_in_bytes']
-        
-        # Format bytes to human-readable format
-        def format_bytes(bytes_val):
-            for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-                if bytes_val < 1024.0:
-                    return f"{bytes_val:.2f} {unit}"
-                bytes_val /= 1024.0
-            return f"{bytes_val:.2f} PB"
-        
-        return {
+        result = {
             "exists": True,
             "index_name": index_name,
-            "doc_count": count_response['count'],
-            "size_in_bytes": size_bytes,
-            "size_readable": format_bytes(size_bytes)
+            "doc_count": count_response['count']
         }
+        
+        # Try to get size stats (only available in traditional Elasticsearch)
+        if not is_serverless:
+            try:
+                stats = es_client.indices.stats(index=index_name)
+                size_bytes = stats['_all']['primaries']['store']['size_in_bytes']
+                
+                # Format bytes to human-readable format
+                def format_bytes(bytes_val):
+                    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+                        if bytes_val < 1024.0:
+                            return f"{bytes_val:.2f} {unit}"
+                        bytes_val /= 1024.0
+                    return f"{bytes_val:.2f} PB"
+                
+                result["size_in_bytes"] = size_bytes
+                result["size_readable"] = format_bytes(size_bytes)
+            except Exception as stats_error:
+                logger.warning(f"Could not retrieve size stats: {stats_error}")
+        else:
+            logger.info("Serverless mode detected - size stats not available")
+        
+        return result
         
     except Exception as e:
         logger.error(f"Failed to get index stats: {e}")
