@@ -76,3 +76,11 @@ logging:
     enabled: true
     index_name: singnseek-logs
     index_frequency: daily  # daily, weekly, monthly, yearly
+
+# ============================================================================
+# UI FEATURES CONFIGURATION
+# ============================================================================
+
+ui:
+  # Enable/disable the Save Song button in Add New Song page
+  enable_save_song: true

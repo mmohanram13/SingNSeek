@@ -5,6 +5,7 @@ import time
 import base64
 from pathlib import Path
 import tempfile
+import yaml
 
 # Page configuration (must be first Streamlit command)
 st.set_page_config(
@@ -27,6 +28,11 @@ except ImportError as e:
     UTILS_AVAILABLE = False
     logger.error(f"Utils module not available: {e}")
     st.warning("⚠️ Utils module not available. Search functionality will be limited.")
+
+# Load configuration
+CONFIG_PATH = Path(__file__).parent / "config.yaml"
+with open(CONFIG_PATH, 'r') as f:
+    CONFIG = yaml.safe_load(f)
 
 # Custom CSS for better styling
 st.markdown("""
@@ -108,6 +114,15 @@ st.markdown("""
         display: block;
         margin: 0 auto;
     }
+    /* Lyrics preview styling */
+    .lyrics-preview {
+        font-size: 0.85rem;
+        color: #555;
+        margin-bottom: 0.2rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -148,6 +163,12 @@ if 'scroll_to_results' not in st.session_state:
     st.session_state.scroll_to_results = False
 if 'current_page' not in st.session_state:
     st.session_state.current_page = 'home'
+if 'show_lyrics_modal' not in st.session_state:
+    st.session_state.show_lyrics_modal = False
+if 'current_lyrics' not in st.session_state:
+    st.session_state.current_lyrics = None
+if 'current_song_title' not in st.session_state:
+    st.session_state.current_song_title = None
 if 'es_connected' not in st.session_state:
     st.session_state.es_connected = None  # None = not checked yet, True = connected, False = failed
 if 'es_connection_error' not in st.session_state:
@@ -169,6 +190,24 @@ def get_all_songs():
         songs = [f for f in os.listdir(dataset_path) if f.endswith('.wav')]
         return sorted(songs)  # Return sorted list for consistency
     return []
+
+@st.dialog("Song Lyrics")
+def show_lyrics_modal(song_title, lyrics):
+    """Display lyrics in a modal dialog with scroll capability"""
+    st.markdown(f"### {song_title}")
+    st.markdown("---")
+    
+    # Display lyrics with proper formatting
+    st.markdown(
+        f"""
+        <div style='max-height: 400px; overflow-y: auto; padding: 1rem; 
+                    background-color: #f0f2f6; border-radius: 8px; 
+                    line-height: 1.8; white-space: pre-wrap;'>
+            {lyrics}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 def check_es_connection():
     """
@@ -329,24 +368,24 @@ if st.session_state.current_page == 'home':
     # AUDIO INPUT - Record or Upload
 
     # Create tabs for record vs upload
-    audio_tab1, audio_tab2 = st.tabs(["Upload File", "Record Audio"])
+    audio_tab1, audio_tab2 = st.tabs(["Upload Audio", "Record Audio"])
 
     with audio_tab1:
         
         audio_file = st.file_uploader(
             "Upload audio file",
-            type=['wav'],
+            type=['wav','mp3'],
             label_visibility="collapsed",
-            help="Upload your audio file (Max 20 MB)",
+            help="Upload your audio file (Max 200 MB)",
             key="file_uploader",
             accept_multiple_files=False
         )
         
         if audio_file:
-            # Check file size (20 MB = 20 * 1024 * 1024 bytes)
-            max_size = 20 * 1024 * 1024
+            # Check file size (200 MB = 200 * 1024 * 1024 bytes)
+            max_size = 200 * 1024 * 1024
             if audio_file.size > max_size:
-                st.error(f"File size ({audio_file.size / (1024 * 1024):.1f} MB) exceeds the 20 MB limit. Please upload a smaller file.")
+                st.error(f"File size ({audio_file.size / (1024 * 1024):.1f} MB) exceeds the 200 MB limit. Please upload a smaller file.")
                 st.session_state.audio_file = None
             else:
                 st.session_state.audio_file = audio_file
@@ -509,11 +548,17 @@ if st.session_state.current_page == 'home':
                 # Decode base64 audio
                 audio_data = base64.b64decode(recorded_audio)
                 
-                # Only update if it's a new recording
-                if st.session_state.audio_bytes != audio_data:
-                    st.session_state.audio_bytes = audio_data
-                    st.success("Recording ready for search!")
-                    st.audio(audio_data, format='audio/wav')
+                # Check recording size (200 MB = 200 * 1024 * 1024 bytes)
+                max_size = 200 * 1024 * 1024
+                if len(audio_data) > max_size:
+                    st.error(f"Recording size ({len(audio_data) / (1024 * 1024):.1f} MB) exceeds the 200 MB limit. Please record a shorter audio clip.")
+                    st.session_state.audio_bytes = None
+                else:
+                    # Only update if it's a new recording
+                    if st.session_state.audio_bytes != audio_data:
+                        st.session_state.audio_bytes = audio_data
+                        st.success("Recording ready for search!")
+                        st.audio(audio_data, format='audio/wav')
             except Exception as e:
                 # Silently ignore decoding errors on initial render
                 pass
@@ -647,38 +692,38 @@ if st.session_state.current_page == 'home':
             if song_data.get('score'):
                 song_card_html += f"<div class='song-info'>⭐ Relevance Score: {song_data['score']:.2f}</div>"
             
-            # Add description if available (from old format)
-            if song_data.get('description'):
-                song_card_html += f"<div class='song-info'>📝 {song_data['description']}</div>"
-            
             # Add composer
-            song_card_html += f"<div class='song-info'>🎼 Composed by {song_data.get('composer', 'Unknown')}</div>"
+            song_card_html += f"<div class='song-info'>Composed by {song_data.get('composer', 'Unknown')}</div>"
             
             # Add singers if available
             if song_data.get('singers'):
-                song_card_html += f"<div class='song-info'>🎤 Singers: {song_data['singers']}</div>"
+                song_card_html += f"<div class='song-info'>Singers: {song_data['singers']}</div>"
             
             # Add genre if available
             if song_data.get('genre'):
-                song_card_html += f"<div class='song-info'>🎵 Genre: {song_data['genre']}</div>"
+                song_card_html += f"<div class='song-info'>Genre: {song_data['genre']}</div>"
             
             # Add album if available
             if song_data.get('album'):
-                song_card_html += f"<div class='song-info'>💿 Album: {song_data['album']}</div>"
+                song_card_html += f"<div class='song-info'>Album: {song_data['album']}</div>"
             
             # Add year if available
             if song_data.get('released_year'):
-                song_card_html += f"<div class='song-info'>📅 Year: {song_data['released_year']}</div>"
-            
-            # Add lyrics if available
-            if song_data.get('lyrics'):
-                # Show first 150 characters of lyrics
-                lyrics_preview = song_data['lyrics'][:150] + "..." if len(song_data['lyrics']) > 150 else song_data['lyrics']
-                song_card_html += f"<div class='song-info'>📄 Lyrics: {lyrics_preview}</div>"
+                song_card_html += f"<div class='song-info'>Year: {song_data['released_year']}</div>"
             
             song_card_html += "</div>"
             
             st.markdown(song_card_html, unsafe_allow_html=True)
+            
+            # Add lyrics preview and View Lyrics button if available
+            if song_data.get('lyrics'):
+                lyrics_col1, lyrics_col2 = st.columns([3, 1])
+                with lyrics_col1:
+                    lyrics_preview = song_data['lyrics'][:100] + "..." if len(song_data['lyrics']) > 100 else song_data['lyrics']
+                    st.markdown(f"<div class='lyrics-preview'>Lyrics: {lyrics_preview}</div>", unsafe_allow_html=True)
+                with lyrics_col2:
+                    if st.button("View Lyrics", key=f"lyrics_btn_top_{idx}", use_container_width=True):
+                        show_lyrics_modal(song_data.get('title', 'Unknown'), song_data['lyrics'])
             
             # Use st.audio with lazy loading (preload="none")
             if song_file:
@@ -758,41 +803,45 @@ elif st.session_state.current_page == 'all_songs':
             
             # Add description if available (from old format)
             if song_data.get('description'):
-                song_card_html += f"<div class='song-info'>📝 {song_data['description']}</div>"
+                song_card_html += f"<div class='song-info'>{song_data['description']}</div>"
             
             # Add composer
             if song_data.get('composer'):
-                song_card_html += f"<div class='song-info'>🎼 Composed by {song_data['composer']}</div>"
+                song_card_html += f"<div class='song-info'>Composed by {song_data['composer']}</div>"
             
             # Add lyricist if available
             if song_data.get('lyricist'):
-                song_card_html += f"<div class='song-info'>✍️ Lyricist: {song_data['lyricist']}</div>"
+                song_card_html += f"<div class='song-info'>Lyricist: {song_data['lyricist']}</div>"
             
             # Add singers if available
             if song_data.get('singers'):
-                song_card_html += f"<div class='song-info'>🎤 Singers: {song_data['singers']}</div>"
+                song_card_html += f"<div class='song-info'>Singers: {song_data['singers']}</div>"
             
             # Add genre if available
             if song_data.get('genre'):
-                song_card_html += f"<div class='song-info'>🎵 Genre: {song_data['genre']}</div>"
+                song_card_html += f"<div class='song-info'>Genre: {song_data['genre']}</div>"
             
             # Add album if available
             if song_data.get('album'):
-                song_card_html += f"<div class='song-info'>💿 Album: {song_data['album']}</div>"
+                song_card_html += f"<div class='song-info'>Album: {song_data['album']}</div>"
             
             # Add year if available
             if song_data.get('released_year'):
-                song_card_html += f"<div class='song-info'>📅 Year: {song_data['released_year']}</div>"
-            
-            # Add lyrics if available
-            if song_data.get('lyrics'):
-                # Show first 100 characters of lyrics
-                lyrics_preview = song_data['lyrics'][:100] + "..." if len(song_data['lyrics']) > 100 else song_data['lyrics']
-                song_card_html += f"<div class='song-info'>📄 Lyrics: {lyrics_preview}</div>"
+                song_card_html += f"<div class='song-info'>Year: {song_data['released_year']}</div>"
             
             song_card_html += "</div>"
             
             st.markdown(song_card_html, unsafe_allow_html=True)
+            
+            # Add lyrics preview and View Lyrics button if available
+            if song_data.get('lyrics'):
+                lyrics_col1, lyrics_col2 = st.columns([3, 1])
+                with lyrics_col1:
+                    lyrics_preview = song_data['lyrics'][:100] + "..." if len(song_data['lyrics']) > 100 else song_data['lyrics']
+                    st.markdown(f"<div class='lyrics-preview'>Lyrics: {lyrics_preview}</div>", unsafe_allow_html=True)
+                with lyrics_col2:
+                    if st.button("View Lyrics", key=f"lyrics_btn_all_{idx}", use_container_width=True):
+                        show_lyrics_modal(song_data.get('title', 'Unknown'), song_data['lyrics'])
             
             # Use st.audio with lazy loading (preload="none")
             if song_file:
@@ -918,39 +967,73 @@ elif st.session_state.current_page == 'add_song':
         # Song Input - Mandatory
         song_file = st.file_uploader(
             "Song File *",
-            type=['wav']
+            type=['wav', 'mp3']
         )
         
         # Add spacing before button
         st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
         
-        # Submit button
+        # Submit button - check config for enabled state
+        save_song_enabled = CONFIG.get('ui', {}).get('enable_save_song', True) and UTILS_AVAILABLE
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            submit_button = st.form_submit_button("Save Song (Coming Soon)", use_container_width=True, type="primary", disabled=True)
+            submit_button = st.form_submit_button("Save Song", use_container_width=True, type="primary", disabled=not save_song_enabled)
         
         if submit_button:
             # Validate mandatory fields
             if not song_name or not song_name.strip():
-                st.error("Song Name is required!")
+                st.error("❌ Song Name is required!")
             elif not music_director or not music_director.strip():
-                st.error("Music Director / Composer is required!")
+                st.error("❌ Music Director / Composer is required!")
             elif not song_file:
-                st.error("Song File is required!")
+                st.error("❌ Song File is required!")
             else:
-                str.info("The 'Add New Song' feature is coming soon! Stay tuned.")
+                # Process the song
+                progress_placeholder = st.empty()
+                status_placeholder = st.empty()
+                
+                try:
+                    status_placeholder.info("🔄 Processing song... Generating embeddings and indexing.")
+                    
+                    # Save uploaded file to temporary location
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
+                        tmp.write(song_file.getvalue())
+                        temp_audio_path = tmp.name
+                    
+                    logger.info(f"Saved uploaded file to: {temp_audio_path}")
+                    
+                    # Add the song using utils function
+                    success, error_msg = utils.add_single_song(
+                        song_name=song_name.strip(),
+                        music_director=music_director.strip(),
+                        audio_file_path=temp_audio_path,
+                        genre=genre.strip() if genre else None,
+                        album=album.strip() if album else None,
+                        lyrics=lyrics.strip() if lyrics else None
+                    )
+                    
+                    # Clean up temporary file
+                    if os.path.exists(temp_audio_path):
+                        os.unlink(temp_audio_path)
+                        logger.debug(f"Cleaned up temporary file: {temp_audio_path}")
+                    
+                    if success:
+                        status_placeholder.success(f"✅ Successfully added song: **{song_name}**")
+                        st.balloons()
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        status_placeholder.error(f"❌ Failed to add song: {error_msg}")
+                        
+                except Exception as e:
+                    status_placeholder.error(f"❌ Error adding song: {str(e)}")
+                    logger.error(f"Error adding song: {str(e)}", exc_info=True)
 
 # Footer
 st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
 st.markdown("""
     <div style='text-align: center; color: #999; font-size: 0.85rem; padding: 1rem 0 0.5rem 0;'>
-        Made with ❤️ for forgetful music lovers&nbsp;&nbsp; | &nbsp;&nbsp;Developed by Mohan Ram M | 
-        <a href='https://github.com/mmohanram13' target='_blank' style='color: #333; text-decoration: none;'>
-            GitHub
-        </a> | 
-        <a href='https://www.linkedin.com/in/mohan-ram-m/' target='_blank' style='color: #0A66C2; text-decoration: none;'>
-            LinkedIn
-        </a>
+        Made with ❤️ for forgetful music lovers&nbsp;&nbsp; | &nbsp;&nbsp;Developed by <a href='https://www.linkedin.com/in/mohan-ram-m/' target='_blank' style='color: #999; text-decoration: underline dotted;'>Mohan Ram M</a>
     </div>
 """, unsafe_allow_html=True)
 

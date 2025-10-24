@@ -13,6 +13,7 @@ import pandas as pd
 import numpy as np
 import torch
 import librosa
+import soundfile as sf
 from elasticsearch import Elasticsearch, helpers
 from google.cloud import aiplatform
 from google.oauth2 import service_account
@@ -590,6 +591,176 @@ def load_demo_data(
     
     logger.info(f"Indexing complete: {successful} successful, {failed} failed")
     return (successful, failed)
+
+
+def add_single_song(
+    song_name: str,
+    music_director: str,
+    audio_file_path: str,
+    genre: Optional[str] = None,
+    album: Optional[str] = None,
+    lyrics: Optional[str] = None,
+    index_name: Optional[str] = None
+) -> Tuple[bool, Optional[str]]:
+    """
+    Add a single song to the Elasticsearch index with embeddings.
+    Uses the existing device detection (CUDA/MPS/CPU) from EmbeddingGenerator.
+    Supports both WAV and MP3 formats (MP3 files are automatically converted to WAV).
+    
+    Args:
+        song_name: Name of the song (required)
+        music_director: Composer/Music Director name (required)
+        audio_file_path: Path to the audio file (required, .wav or .mp3 format)
+        genre: Genre of the song (optional)
+        album: Album/Movie name (optional)
+        lyrics: Lyrics of the song (optional)
+        index_name: Name of the index (defaults to config value)
+    
+    Returns:
+        Tuple of (success: bool, error_message: Optional[str])
+    """
+    if index_name is None:
+        index_name = CONFIG['elasticsearch']['index_name']
+    
+    es_client = get_es_client().get_client()
+    embedding_gen = get_embedding_generator()
+    
+    # Check if index exists
+    if not es_client.indices.exists(index=index_name):
+        error_msg = f"Index '{index_name}' does not exist. Please initialize the index first."
+        logger.error(error_msg)
+        return (False, error_msg)
+    
+    # Validate audio file
+    if not os.path.exists(audio_file_path):
+        error_msg = f"Audio file not found: {audio_file_path}"
+        logger.error(error_msg)
+        return (False, error_msg)
+    
+    # Check file extension and convert MP3 to WAV if needed
+    file_ext = audio_file_path.lower()
+    converted_file = None
+    original_audio_path = audio_file_path  # Keep original path for filename
+    
+    if file_ext.endswith('.mp3'):
+        logger.info(f"MP3 file detected, converting to WAV: {audio_file_path}")
+        try:
+            # Load MP3 and convert to WAV using librosa and soundfile
+            audio, sample_rate = librosa.load(audio_file_path, sr=None, mono=False)
+            
+            # Create temporary WAV file
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_wav:
+                converted_file = tmp_wav.name
+            
+            # Save as WAV
+            sf.write(converted_file, audio.T if audio.ndim > 1 else audio, sample_rate)
+            logger.info(f"Successfully converted MP3 to WAV: {converted_file}")
+            
+            # Use the converted file for processing
+            audio_file_path = converted_file
+            
+        except Exception as e:
+            error_msg = f"Failed to convert MP3 to WAV: {str(e)}"
+            logger.error(error_msg)
+            return (False, error_msg)
+    
+    elif not file_ext.endswith('.wav'):
+        error_msg = "Only .wav and .mp3 files are supported"
+        logger.error(error_msg)
+        return (False, error_msg)
+    
+    try:
+        # Get the next song index by counting existing documents
+        count_response = es_client.count(index=index_name)
+        next_song_index = count_response['count'] + 1
+        
+        # Extract filename from original path (preserve original extension)
+        song_file_name = os.path.basename(original_audio_path)
+        
+        # Prepare song data
+        song_data = {
+            'song_index': next_song_index,
+            'song_name': song_name,
+            'song_file_path_name': song_file_name,
+            'composer': music_director,
+            'album': album or '',
+            'released_year': None,  # Not provided in form
+            'genre': genre or '',
+            'lyricist': '',  # Not provided in form
+            'singers': '',  # Not provided in form
+            'lyrics': lyrics or ''
+        }
+        
+        logger.info(f"Processing song: {song_name} on device: {embedding_gen.device}")
+        
+        # Generate text embedding from metadata + lyrics
+        text_embedding = None
+        try:
+            text_embedding = embedding_gen.generate_combined_text_embedding(song_data)
+            if text_embedding is not None:
+                song_data['lyrics_vector'] = text_embedding.tolist()
+                logger.info(f"Generated text embedding for: {song_name}")
+            else:
+                logger.warning(f"Failed to generate text embedding for: {song_name}")
+        except Exception as e:
+            logger.warning(f"Text embedding generation failed: {e}")
+        
+        # Generate audio embedding
+        audio_embedding = None
+        try:
+            audio_embedding = embedding_gen.generate_audio_embedding(audio_file_path)
+            if audio_embedding is not None:
+                song_data['audio_vector'] = audio_embedding.tolist()
+                logger.info(f"Generated audio embedding for: {song_name}")
+            else:
+                logger.warning(f"Failed to generate audio embedding for: {song_name}")
+        except Exception as e:
+            logger.warning(f"Audio embedding generation failed: {e}")
+        
+        # Index the song
+        es_client.index(
+            index=index_name,
+            id=str(next_song_index),
+            document=song_data
+        )
+        
+        logger.info(f"Successfully indexed song: {song_name} (index: {next_song_index})")
+        
+        return (True, None)
+        
+    except Exception as e:
+        error_msg = f"Failed to index song: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        return (False, error_msg)
+    
+    finally:
+        # Clean up converted MP3 file if it was created
+        if converted_file and os.path.exists(converted_file):
+            try:
+                os.unlink(converted_file)
+                logger.debug(f"Cleaned up converted file: {converted_file}")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup converted file: {e}")
+        
+        # Clean up memory
+        if 'text_embedding' in locals():
+            del text_embedding
+        if 'audio_embedding' in locals():
+            del audio_embedding
+        
+        # Clear device cache
+        if embedding_gen.device == 'cuda':
+            torch.cuda.empty_cache()
+        elif embedding_gen.device == 'mps':
+            try:
+                torch.mps.empty_cache()
+            except:
+                pass
+        
+        # Force garbage collection
+        gc.collect()
+        logger.debug("Memory cleanup performed after adding song")
 
 
 def get_all_songs(index_name: Optional[str] = None, size: int = 1000) -> List[Dict]:
