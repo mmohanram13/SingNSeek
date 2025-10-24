@@ -7,6 +7,7 @@ import os
 import yaml
 from typing import List, Dict, Optional, Tuple, Any
 from pathlib import Path
+import gc
 
 import pandas as pd
 import numpy as np
@@ -121,13 +122,26 @@ class EmbeddingGenerator:
         self._setup_vertex_ai()
     
     def _setup_device(self) -> str:
-        """Auto-detect best available device (MPS/CUDA/CPU)."""
-        if torch.backends.mps.is_available():
-            return 'mps'
-        elif torch.cuda.is_available():
-            return 'cuda'
-        else:
-            return 'cpu'
+        """Auto-detect best available device (MPS/CUDA/CPU) with fallback."""
+        try:
+            # Try MPS (Apple Silicon) first
+            if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+                logger.info("Using MPS (Apple Silicon GPU) for embeddings")
+                return 'mps'
+        except Exception as e:
+            logger.warning(f"MPS check failed: {e}, trying CUDA")
+        
+        try:
+            # Try CUDA (NVIDIA GPU)
+            if torch.cuda.is_available():
+                logger.info(f"Using CUDA (GPU: {torch.cuda.get_device_name(0)}) for embeddings")
+                return 'cuda'
+        except Exception as e:
+            logger.warning(f"CUDA check failed: {e}, falling back to CPU")
+        
+        # Fallback to CPU
+        logger.info("Using CPU for embeddings")
+        return 'cpu'
     
     def _setup_audio_model(self):
         """Initialize MuQ model for audio embeddings."""
@@ -139,8 +153,18 @@ class EmbeddingGenerator:
             model_name = CONFIG['muq']['model']
             logger.info(f"Loading MuQ model: {model_name} on {self.device}")
             self.audio_model = MuQ.from_pretrained(model_name)
-            self.audio_model = self.audio_model.to(self.device).eval()
-            logger.info("MuQ model loaded successfully")
+            
+            # Try to move model to device with fallback
+            try:
+                self.audio_model = self.audio_model.to(self.device).eval()
+                logger.info(f"MuQ model loaded successfully on {self.device}")
+            except Exception as device_error:
+                logger.warning(f"Failed to load model on {self.device}: {device_error}")
+                logger.info("Falling back to CPU")
+                self.device = 'cpu'
+                self.audio_model = self.audio_model.to('cpu').eval()
+                logger.info("MuQ model loaded successfully on CPU")
+                
         except Exception as e:
             logger.error(f"Failed to load MuQ model: {e}")
             self.audio_model = None
@@ -176,17 +200,29 @@ class EmbeddingGenerator:
             logger.warning("Audio model not available")
             return None
         
+        wav = None
+        wavs = None
+        output = None
+        embedding_tensor = None
+        
         try:
             # Load audio file
             wav, sr = librosa.load(audio_path, sr=self.sample_rate)
-            wavs = torch.tensor(wav).unsqueeze(0).to(self.device)
+            
+            # Create tensor and move to device with fallback
+            try:
+                wavs = torch.tensor(wav, dtype=torch.float32).unsqueeze(0).to(self.device)
+            except Exception as device_error:
+                logger.warning(f"Failed to move tensor to {self.device}: {device_error}, using CPU")
+                wavs = torch.tensor(wav, dtype=torch.float32).unsqueeze(0).to('cpu')
             
             # Generate embedding
             with torch.no_grad():
                 output = self.audio_model(wavs, output_hidden_states=True)
                 # Use mean pooling over time dimension
-                embedding = output.last_hidden_state.mean(dim=1).squeeze()
-                embedding = embedding.cpu().numpy()
+                embedding_tensor = output.last_hidden_state.mean(dim=1).squeeze()
+                # Always move to CPU before converting to numpy
+                embedding = embedding_tensor.cpu().numpy().copy()
             
             logger.info(f"Generated audio embedding with shape: {embedding.shape}")
             return embedding
@@ -194,6 +230,22 @@ class EmbeddingGenerator:
         except Exception as e:
             logger.error(f"Failed to generate audio embedding for {audio_path}: {e}")
             return None
+        
+        finally:
+            # Explicit memory cleanup
+            del wav, wavs, output, embedding_tensor
+            
+            # Clear PyTorch cache
+            if self.device == 'cuda':
+                torch.cuda.empty_cache()
+            elif self.device == 'mps':
+                try:
+                    torch.mps.empty_cache()
+                except:
+                    pass
+            
+            # Force garbage collection
+            gc.collect()
     
     def generate_text_embedding(self, text: str) -> Optional[np.ndarray]:
         """
@@ -208,6 +260,9 @@ class EmbeddingGenerator:
         if not text or not text.strip():
             return None
         
+        model = None
+        embeddings = None
+        
         try:
             from vertexai.language_models import TextEmbeddingModel
             
@@ -216,7 +271,7 @@ class EmbeddingGenerator:
             
             # Generate embedding
             embeddings = model.get_embeddings([text])
-            embedding = np.array(embeddings[0].values)
+            embedding = np.array(embeddings[0].values).copy()
             
             logger.info(f"Generated text embedding with shape: {embedding.shape}")
             return embedding
@@ -224,6 +279,11 @@ class EmbeddingGenerator:
         except Exception as e:
             logger.error(f"Failed to generate text embedding: {e}")
             return None
+        
+        finally:
+            # Explicit memory cleanup
+            del model, embeddings
+            gc.collect()
     
     def generate_combined_text_embedding(self, song_data: Dict[str, Any]) -> Optional[np.ndarray]:
         """
@@ -459,6 +519,9 @@ def load_demo_data(
     
     # Index songs one at a time
     for idx, row in df.iterrows():
+        text_embedding = None
+        audio_embedding = None
+        
         try:
             # Prepare song data
             song_data = {
@@ -505,6 +568,25 @@ def load_demo_data(
         except Exception as e:
             failed += 1
             logger.error(f"Failed to index song {idx + 1}/{total_songs} ({row.get('song_name', 'Unknown')}): {e}")
+        
+        finally:
+            # CRITICAL: Clear embeddings from memory after each song
+            del text_embedding, audio_embedding
+            
+            # Clear PyTorch cache after EVERY song (not periodically)
+            # This is crucial for preventing memory buildup
+            if embedding_gen.device == 'cuda':
+                torch.cuda.empty_cache()
+            elif embedding_gen.device == 'mps':
+                try:
+                    torch.mps.empty_cache()
+                except:
+                    pass
+            
+            # Force garbage collection after each song to prevent memory buildup
+            gc.collect()
+            
+            logger.info(f"Memory cleanup performed after song {idx + 1}")
     
     logger.info(f"Indexing complete: {successful} successful, {failed} failed")
     return (successful, failed)
@@ -598,67 +680,70 @@ def search_songs(
     es_client = get_es_client().get_client()
     embedding_gen = get_embedding_generator()
     
-    # Build query
-    must_queries = []
-    should_queries = []
-    
-    # Text-based search (BM25)
-    if query_text:
-        should_queries.append({
-            "multi_match": {
-                "query": query_text,
-                "fields": ["song_name^3", "lyrics^2", "singers", "composer", "lyricist", "genre"],
-                "type": "best_fields",
-                "fuzziness": "AUTO"
-            }
-        })
-        
-        # Vector search on text embedding
-        text_embedding = embedding_gen.generate_text_embedding(query_text)
-        if text_embedding is not None:
-            should_queries.append({
-                "script_score": {
-                    "query": {"match_all": {}},
-                    "script": {
-                        "source": "cosineSimilarity(params.query_vector, 'lyrics_vector') + 1.0",
-                        "params": {"query_vector": text_embedding.tolist()}
-                    }
-                }
-            })
-    
-    # Audio-based search (vector similarity)
-    if query_audio_path and os.path.exists(query_audio_path):
-        audio_embedding = embedding_gen.generate_audio_embedding(query_audio_path)
-        if audio_embedding is not None:
-            should_queries.append({
-                "script_score": {
-                    "query": {"match_all": {}},
-                    "script": {
-                        "source": "cosineSimilarity(params.query_vector, 'audio_vector') + 1.0",
-                        "params": {"query_vector": audio_embedding.tolist()}
-                    }
-                }
-            })
-    
-    # Build final query
-    if not should_queries:
-        logger.warning("No valid query provided")
-        return []
-    
-    search_query = {
-        "query": {
-            "bool": {
-                "should": should_queries,
-                "minimum_should_match": 1
-            }
-        },
-        "size": top_k,
-        "_source": {
-            "excludes": ["lyrics_vector", "audio_vector"]
-        }
-    }
+    text_embedding = None
+    audio_embedding = None
     
     try:
+        # Build query
+        must_queries = []
+        should_queries = []
+        
+        # Text-based search (BM25)
+        if query_text:
+            should_queries.append({
+                "multi_match": {
+                    "query": query_text,
+                    "fields": ["song_name^3", "lyrics^2", "singers", "composer", "lyricist", "genre"],
+                    "type": "best_fields",
+                    "fuzziness": "AUTO"
+                }
+            })
+            
+            # Vector search on text embedding
+            text_embedding = embedding_gen.generate_text_embedding(query_text)
+            if text_embedding is not None:
+                should_queries.append({
+                    "script_score": {
+                        "query": {"match_all": {}},
+                        "script": {
+                            "source": "cosineSimilarity(params.query_vector, 'lyrics_vector') + 1.0",
+                            "params": {"query_vector": text_embedding.tolist()}
+                        }
+                    }
+                })
+        
+        # Audio-based search (vector similarity)
+        if query_audio_path and os.path.exists(query_audio_path):
+            audio_embedding = embedding_gen.generate_audio_embedding(query_audio_path)
+            if audio_embedding is not None:
+                should_queries.append({
+                    "script_score": {
+                        "query": {"match_all": {}},
+                        "script": {
+                            "source": "cosineSimilarity(params.query_vector, 'audio_vector') + 1.0",
+                            "params": {"query_vector": audio_embedding.tolist()}
+                        }
+                    }
+                })
+        
+        # Build final query
+        if not should_queries:
+            logger.warning("No valid query provided")
+            return []
+        
+        search_query = {
+            "query": {
+                "bool": {
+                    "should": should_queries,
+                    "minimum_should_match": 1
+                }
+            },
+            "size": top_k,
+            "_source": {
+                "excludes": ["lyrics_vector", "audio_vector"]
+            }
+        }
+        
         response = es_client.search(index=index_name, body=search_query)
         
         results = []
@@ -674,6 +759,20 @@ def search_songs(
     except Exception as e:
         logger.error(f"Search failed: {e}")
         return []
+    
+    finally:
+        # Clear query embeddings from memory
+        del text_embedding, audio_embedding
+        gc.collect()
+        
+        # Clear PyTorch cache if using GPU
+        if embedding_gen.device == 'cuda':
+            torch.cuda.empty_cache()
+        elif embedding_gen.device == 'mps':
+            try:
+                torch.mps.empty_cache()
+            except:
+                pass
 
 
 def rerank_with_vertex_ai(query: str, results: List[Dict], top_k: int = 10) -> List[Dict]:
