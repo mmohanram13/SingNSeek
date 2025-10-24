@@ -86,4 +86,4 @@ ui:
   enable_save_song: false
   
   # Enable/disable the Initialize and Load Demo Data button
-  enable_initialize_data: false
+  enable_initialize_data: true
