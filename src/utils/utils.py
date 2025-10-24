@@ -339,7 +339,7 @@ def create_song_index(index_name: Optional[str] = None) -> bool:
         logger.warning(f"Index '{index_name}' already exists")
         return False
     
-    # Define index mapping
+    # Define index mapping with BBQ-HNSW optimization
     mapping = {
         "mappings": {
             "properties": {
@@ -361,14 +361,30 @@ def create_song_index(index_name: Optional[str] = None) -> bool:
                     "dims": CONFIG['embeddings']['text_dims'],
                     "element_type": "float",
                     "index": True,
-                    "similarity": "dot_product"
+                    "similarity": "dot_product",
+                    "index_options": {
+                        "type": "bbq_hnsw",
+                        "m": 16,
+                        "ef_construction": 100,
+                        "rescore_vector": {
+                            "oversample": 3
+                        }
+                    }
                 },
                 "audio_vector": {
                     "type": "dense_vector",
                     "dims": CONFIG['embeddings']['audio_dims'],
                     "element_type": "float",
                     "index": True,
-                    "similarity": "dot_product"
+                    "similarity": "cosine",
+                    "index_options": {
+                        "type": "bbq_hnsw",
+                        "m": 16,
+                        "ef_construction": 100,
+                        "rescore_vector": {
+                            "oversample": 3
+                        }
+                    }
                 }
             }
         }
@@ -845,25 +861,39 @@ def search_songs(
     query_text: Optional[str] = None,
     query_audio_path: Optional[str] = None,
     index_name: Optional[str] = None,
-    top_k: Optional[int] = None
+    top_k: Optional[int] = None,
+    num_candidates: Optional[int] = None,
+    confidence_threshold: float = 0.5,
+    max_results: int = 2
 ) -> List[Dict]:
     """
-    Search songs using hybrid approach (text + audio).
+    Search songs using hybrid approach supporting three modes:
+    1. Text-only: Natural language search across lyrics, metadata, and semantic embeddings
+    2. Audio-only: KNN search based on audio embeddings
+    3. Text + Audio: Combined hybrid search with both modalities
+    
+    Simply returns the top max_results from Elasticsearch with their raw _score values.
     
     Args:
-        query_text: Text query (lyrics, song name, composer, etc.)
+        query_text: Text query (natural language, lyrics snippets, metadata, etc.)
         query_audio_path: Path to audio file for similarity search
         index_name: Name of the index
-        top_k: Number of results to return
+        top_k: Number of candidates to retrieve (default: 20)
+        num_candidates: Number of candidates for KNN (default: 100)
+        confidence_threshold: Not used (kept for backward compatibility)
+        max_results: Maximum number of results to return (default: 2)
     
     Returns:
-        List of matching songs with scores
+        List of top max_results songs with their Elasticsearch _score values
     """
     if index_name is None:
         index_name = CONFIG['elasticsearch']['index_name']
     
     if top_k is None:
-        top_k = CONFIG['search']['top_k']
+        top_k = 20  # Retrieve more candidates to find multiple good matches
+    
+    if num_candidates is None:
+        num_candidates = 100
     
     es_client = get_es_client().get_client()
     embedding_gen = get_embedding_generator()
@@ -872,77 +902,91 @@ def search_songs(
     audio_embedding = None
     
     try:
-        # Build query
-        must_queries = []
-        should_queries = []
+        # Determine search mode
+        has_text = query_text is not None and query_text.strip()
+        has_audio = query_audio_path is not None and os.path.exists(query_audio_path)
         
-        # Text-based search (BM25)
-        if query_text:
-            should_queries.append({
-                "multi_match": {
-                    "query": query_text,
-                    "fields": ["song_name^3", "lyrics^2", "singers", "composer", "lyricist", "genre"],
-                    "type": "best_fields",
-                    "fuzziness": "AUTO"
-                }
-            })
-            
-            # Vector search on text embedding
-            text_embedding = embedding_gen.generate_text_embedding(query_text)
-            if text_embedding is not None:
-                should_queries.append({
-                    "script_score": {
-                        "query": {"match_all": {}},
-                        "script": {
-                            "source": "cosineSimilarity(params.query_vector, 'lyrics_vector') + 1.0",
-                            "params": {"query_vector": text_embedding.tolist()}
-                        }
-                    }
-                })
-        
-        # Audio-based search (vector similarity)
-        if query_audio_path and os.path.exists(query_audio_path):
-            audio_embedding = embedding_gen.generate_audio_embedding(query_audio_path)
-            if audio_embedding is not None:
-                should_queries.append({
-                    "script_score": {
-                        "query": {"match_all": {}},
-                        "script": {
-                            "source": "cosineSimilarity(params.query_vector, 'audio_vector') + 1.0",
-                            "params": {"query_vector": audio_embedding.tolist()}
-                        }
-                    }
-                })
-        
-        # Build final query
-        if not should_queries:
+        if not has_text and not has_audio:
             logger.warning("No valid query provided")
             return []
         
-        search_query = {
-            "query": {
-                "bool": {
-                    "should": should_queries,
-                    "minimum_should_match": 1
-                }
-            },
-            "size": top_k,
-            "_source": {
-                "excludes": ["lyrics_vector", "audio_vector"]
-            }
-        }
+        # Retrieve candidates based on mode
+        candidates = []
         
-        response = es_client.search(index=index_name, body=search_query)
+        # Mode 1: Audio-only search (KNN)
+        if has_audio and not has_text:
+            candidates = _search_audio_only(
+                es_client, 
+                embedding_gen, 
+                query_audio_path, 
+                index_name, 
+                top_k, 
+                num_candidates
+            )
         
-        results = []
-        for hit in response['hits']['hits']:
-            song = hit['_source']
-            song['_id'] = hit['_id']
-            song['_score'] = hit['_score']
-            results.append(song)
+        # Mode 2: Text-only search (Natural language + semantic)
+        elif has_text and not has_audio:
+            candidates = _search_text_only(
+                es_client, 
+                embedding_gen, 
+                query_text, 
+                index_name, 
+                top_k, 
+                num_candidates
+            )
         
-        logger.info(f"Found {len(results)} matching songs")
-        return results
+        # Mode 3: Hybrid search (Text + Audio)
+        else:
+            candidates = _search_hybrid(
+                es_client, 
+                embedding_gen, 
+                query_text, 
+                query_audio_path, 
+                index_name, 
+                top_k, 
+                num_candidates
+            )
+        
+        # If no candidates found, return empty list
+        if not candidates:
+            logger.info("No search results found")
+            return []
+
+        # Filter candidates by minimum ES Score threshold
+        MIN_ES_SCORE = 0.0
+        filtered_candidates = [c for c in candidates if c['_score'] >= MIN_ES_SCORE]
+        
+        if not filtered_candidates:
+            logger.info(f"No results found with ES Score >= {MIN_ES_SCORE}")
+            return []
+        
+        # Implement adaptive result filtering based on score difference
+        # If score difference between top 2 results is less than 2, show up to 2 results
+        # Otherwise, show only 1 result
+        if len(filtered_candidates) >= 2:
+            top_score = filtered_candidates[0]['_score']
+            second_score = filtered_candidates[1]['_score']
+            score_diff = abs(top_score - second_score)
+            
+            if score_diff < 2.0:
+                # Score difference is small - both results are relevant
+                top_results = filtered_candidates[:2]
+                logger.info(f"Score difference ({score_diff:.4f}) < 2.0 - returning top 2 results")
+            else:
+                # Score difference is large - only top result is clearly relevant
+                top_results = filtered_candidates[:1]
+                logger.info(f"Score difference ({score_diff:.4f}) >= 2.0 - returning only top 1 result")
+        else:
+            # Only one candidate available
+            top_results = filtered_candidates[:1]
+            logger.info("Only one candidate available - returning 1 result")
+        
+        # Log results
+        logger.info(f"Returning {len(top_results)} result(s)")
+        for i, result in enumerate(top_results, 1):
+            logger.info(f"  #{i}: {result.get('song_name', 'Unknown')} - ES Score: {result['_score']:.4f}")
+        
+        return top_results
         
     except Exception as e:
         logger.error(f"Search failed: {e}")
@@ -961,6 +1005,434 @@ def search_songs(
                 torch.mps.empty_cache()
             except:
                 pass
+
+
+def _search_audio_only(
+    es_client: Elasticsearch,
+    embedding_gen: EmbeddingGenerator,
+    audio_path: str,
+    index_name: str,
+    top_k: int,
+    num_candidates: int
+) -> List[Dict]:
+    """
+    Audio-only KNN search using audio embeddings.
+    
+    Args:
+        es_client: Elasticsearch client
+        embedding_gen: Embedding generator instance
+        audio_path: Path to query audio file
+        index_name: Index name
+        top_k: Number of results
+        num_candidates: KNN candidate count
+    
+    Returns:
+        List of matching songs
+    """
+    audio_embedding = None
+    
+    try:
+        # Generate audio embedding
+        audio_embedding = embedding_gen.generate_audio_embedding(audio_path)
+        if audio_embedding is None:
+            logger.error("Failed to generate audio embedding")
+            return []
+        
+        # Build KNN query with filter
+        search_query = {
+            "knn": {
+                "field": "audio_vector",
+                "query_vector": audio_embedding.tolist(),
+                "k": top_k,
+                "num_candidates": num_candidates,
+                "boost": 100
+            },
+            "query": {
+                "bool": {
+                    "filter": [{
+                        "exists": {
+                            "field": "audio_vector"
+                        }
+                    }]
+                }
+            },
+            "size": top_k,
+            "_source": {
+                "excludes": ["lyrics_vector", "audio_vector"]
+            }
+        }
+        
+        response = es_client.search(index=index_name, body=search_query)
+        
+        results = []
+        for hit in response['hits']['hits']:
+            song = hit['_source']
+            song['_id'] = hit['_id']
+            song['_score'] = hit['_score']
+            results.append(song)
+        
+        logger.info(f"Audio-only search found {len(results)} songs")
+        return results
+        
+    except Exception as e:
+        logger.error(f"Audio-only search failed: {e}")
+        return []
+    
+    finally:
+        del audio_embedding
+        gc.collect()
+
+
+def _search_text_only(
+    es_client: Elasticsearch,
+    embedding_gen: EmbeddingGenerator,
+    query_text: str,
+    index_name: str,
+    top_k: int,
+    num_candidates: int
+) -> List[Dict]:
+    """
+    Text-only search with natural language understanding.
+    Uses Vertex AI Gemini to parse queries and extract field-specific filters.
+    Combines filtered search with semantic vector search.
+    
+    Query types handled:
+    - Field-specific: "song with composer AiCanvas" -> Filter by composer
+    - Lyrics search: "lyrics about love" -> Semantic + text hybrid search
+    - General: "apocalypse" -> Best fields match
+    
+    Args:
+        es_client: Elasticsearch client
+        embedding_gen: Embedding generator instance
+        query_text: Natural language query
+        index_name: Index name
+        top_k: Number of results
+        num_candidates: KNN candidate count for semantic search
+    
+    Returns:
+        List of matching songs
+    """
+    text_embedding = None
+    
+    try:
+        # Import and use query vetter to parse natural language query
+        from .query_vetter import get_query_vetter
+        
+        query_vetter = get_query_vetter()
+        parsed_query = query_vetter.parse_query(query_text)
+        
+        logger.info(f"Parsed query: {parsed_query}")
+        
+        # Extract parsed components
+        filters = parsed_query.get("filters", {})
+        search_text = parsed_query.get("search_text", "")
+        search_type = parsed_query.get("search_type", "general")
+        use_hybrid = parsed_query.get("use_hybrid", False)
+        
+        # Build Elasticsearch query based on parsed information
+        bool_query = {
+            "bool": {
+                "must": [],
+                "should": [],
+                "filter": [],
+                "minimum_should_match": 0
+            }
+        }
+        
+        # Add field-specific filters (exact match)
+        if filters:
+            for field, value in filters.items():
+                # Use match query for better flexibility (handles partial matches)
+                bool_query["bool"]["must"].append({
+                    "match": {
+                        field: {
+                            "query": value,
+                            "fuzziness": "AUTO"
+                        }
+                    }
+                })
+        
+        # Add text search component
+        if search_text:
+            if search_type == "lyrics" or use_hybrid:
+                # Lyrics search: Focus on lyrics field with higher weight
+                bool_query["bool"]["should"].append({
+                    "multi_match": {
+                        "query": search_text,
+                        "fields": [
+                            "lyrics^5",          # Highest boost for lyrics
+                            "song_name^2",       # Lower boost for song name
+                            "singers",           # Standard boost
+                            "composer",
+                            "lyricist",
+                            "genre",
+                            "album"
+                        ],
+                        "type": "best_fields",
+                        "fuzziness": "AUTO"
+                    }
+                })
+            else:
+                # General/metadata search: Balanced across all fields
+                bool_query["bool"]["should"].append({
+                    "multi_match": {
+                        "query": search_text,
+                        "fields": [
+                            "song_name^4",       # Highest boost for song names
+                            "lyrics^3",          # High boost for lyrics
+                            "singers^2",         # Medium boost for singers
+                            "composer^2",        # Medium boost for composer
+                            "lyricist^2",        # Medium boost for lyricist
+                            "genre^2",           # Medium boost for genre
+                            "album"              # Standard boost for album
+                        ],
+                        "type": "best_fields",
+                        "fuzziness": "AUTO"
+                    }
+                })
+        
+        # Set minimum_should_match based on whether we have filters
+        if filters and search_text:
+            # If we have both filters and search text, at least the filters must match
+            # Search text is optional (should clause)
+            bool_query["bool"]["minimum_should_match"] = 0
+        elif search_text:
+            # If we only have search text, it must match
+            bool_query["bool"]["minimum_should_match"] = 1
+        elif filters:
+            # If we only have filters, they're already in must clause
+            pass
+        else:
+            # No filters and no search text - shouldn't happen, but handle gracefully
+            bool_query["bool"]["minimum_should_match"] = 0
+        
+        search_body = {
+            "query": bool_query,
+            "size": top_k,
+            "_source": {
+                "excludes": ["lyrics_vector", "audio_vector"]
+            }
+        }
+        
+        # Add semantic search for lyrics queries
+        if (search_type == "lyrics" or use_hybrid) and search_text:
+            # Generate text embedding for semantic search
+            text_embedding = embedding_gen.generate_text_embedding(search_text)
+            
+            if text_embedding is not None:
+                search_body["knn"] = {
+                    "field": "lyrics_vector",
+                    "query_vector": text_embedding.tolist(),
+                    "k": top_k,
+                    "num_candidates": num_candidates,
+                    "boost": 100  # Higher boost for lyrics semantic search
+                }
+                # Add filter to ensure lyrics_vector exists
+                bool_query["bool"]["filter"].append({
+                    "exists": {
+                        "field": "lyrics_vector"
+                    }
+                })
+        
+        response = es_client.search(index=index_name, body=search_body)
+        
+        results = []
+        for hit in response['hits']['hits']:
+            song = hit['_source']
+            song['_id'] = hit['_id']
+            song['_score'] = hit['_score']
+            results.append(song)
+        
+        logger.info(f"Text-only search found {len(results)} songs (search_type: {search_type})")
+        return results
+        
+    except Exception as e:
+        logger.error(f"Text-only search failed: {e}")
+        # Fallback to simple search if query vetter fails
+        try:
+            text_embedding = embedding_gen.generate_text_embedding(query_text)
+            
+            # Simple fallback query
+            bool_query = {
+                "bool": {
+                    "should": [
+                        {
+                            "multi_match": {
+                                "query": query_text,
+                                "fields": [
+                                    "song_name^4",
+                                    "lyrics^3",
+                                    "singers^2",
+                                    "composer^2",
+                                    "lyricist^2",
+                                    "genre^2",
+                                    "album"
+                                ],
+                                "type": "best_fields",
+                                "fuzziness": "AUTO"
+                            }
+                        }
+                    ],
+                    "minimum_should_match": 1
+                }
+            }
+            
+            search_body = {
+                "query": bool_query,
+                "size": top_k,
+                "_source": {
+                    "excludes": ["lyrics_vector", "audio_vector"]
+                }
+            }
+            
+            if text_embedding is not None:
+                search_body["knn"] = {
+                    "field": "lyrics_vector",
+                    "query_vector": text_embedding.tolist(),
+                    "k": top_k,
+                    "num_candidates": num_candidates,
+                    "boost": 50
+                }
+                bool_query["bool"]["filter"] = [{
+                    "exists": {
+                        "field": "lyrics_vector"
+                    }
+                }]
+            
+            response = es_client.search(index=index_name, body=search_body)
+            
+            results = []
+            for hit in response['hits']['hits']:
+                song = hit['_source']
+                song['_id'] = hit['_id']
+                song['_score'] = hit['_score']
+                results.append(song)
+            
+            logger.info(f"Fallback text search found {len(results)} songs")
+            return results
+            
+        except Exception as fallback_error:
+            logger.error(f"Fallback search also failed: {fallback_error}")
+            return []
+    
+    finally:
+        del text_embedding
+        gc.collect()
+
+
+def _search_hybrid(
+    es_client: Elasticsearch,
+    embedding_gen: EmbeddingGenerator,
+    query_text: str,
+    audio_path: str,
+    index_name: str,
+    top_k: int,
+    num_candidates: int
+) -> List[Dict]:
+    """
+    Hybrid search combining text and audio queries.
+    Uses both KNN for text/audio embeddings and BM25 for keyword matching.
+    
+    Args:
+        es_client: Elasticsearch client
+        embedding_gen: Embedding generator instance
+        query_text: Natural language query
+        audio_path: Path to query audio file
+        index_name: Index name
+        top_k: Number of results
+        num_candidates: KNN candidate count
+    
+    Returns:
+        List of matching songs
+    """
+    text_embedding = None
+    audio_embedding = None
+    
+    try:
+        # Generate embeddings
+        text_embedding = embedding_gen.generate_text_embedding(query_text)
+        audio_embedding = embedding_gen.generate_audio_embedding(audio_path)
+        
+        # Build hybrid query
+        bool_query = {
+            "bool": {
+                "should": [
+                    # BM25 keyword search
+                    {
+                        "multi_match": {
+                            "query": query_text,
+                            "fields": [
+                                "song_name^4",
+                                "lyrics^3",
+                                "singers^2",
+                                "composer^2",
+                                "lyricist^2",
+                                "genre^2",
+                                "album"
+                            ],
+                            "type": "best_fields",
+                            "fuzziness": "AUTO"
+                        }
+                    }
+                ],
+                "filter": [
+                    # Ensure both vector fields exist
+                    {"exists": {"field": "lyrics_vector"}},
+                    {"exists": {"field": "audio_vector"}}
+                ],
+                "minimum_should_match": 1
+            }
+        }
+        
+        search_body = {
+            "query": bool_query,
+            "knn": [],
+            "size": top_k,
+            "_source": {
+                "excludes": ["lyrics_vector", "audio_vector"]
+            }
+        }
+        
+        # Add text KNN if embedding available
+        if text_embedding is not None:
+            search_body["knn"].append({
+                "field": "lyrics_vector",
+                "query_vector": text_embedding.tolist(),
+                "k": top_k,
+                "num_candidates": num_candidates,
+                "boost": 50
+            })
+        
+        # Add audio KNN if embedding available
+        if audio_embedding is not None:
+            search_body["knn"].append({
+                "field": "audio_vector",
+                "query_vector": audio_embedding.tolist(),
+                "k": top_k,
+                "num_candidates": num_candidates,
+                "boost": 100  # Higher boost for audio as it's more specific
+            })
+        
+        response = es_client.search(index=index_name, body=search_body)
+        
+        results = []
+        for hit in response['hits']['hits']:
+            song = hit['_source']
+            song['_id'] = hit['_id']
+            song['_score'] = hit['_score']
+            results.append(song)
+        
+        logger.info(f"Hybrid search found {len(results)} songs")
+        return results
+        
+    except Exception as e:
+        logger.error(f"Hybrid search failed: {e}")
+        return []
+    
+    finally:
+        del text_embedding, audio_embedding
+        gc.collect()
+
 
 
 def rerank_with_vertex_ai(query: str, results: List[Dict], top_k: int = 10) -> List[Dict]:

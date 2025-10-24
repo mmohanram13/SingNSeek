@@ -273,10 +273,11 @@ def perform_search(query_text, audio_data=None, audio_file=None):
                 logger.debug(f"Cleaned up temporary file: {temp_audio_path}")
             
             # Update session state with results
+            # search_songs now returns a list of results (up to 2 with >25% confidence)
             if results:
                 st.session_state.search_results = results
                 st.session_state.search_state = 'searched'
-                logger.info(f"Search completed successfully - found {len(results)} results")
+                logger.info(f"Search completed successfully - found {len(results)} result(s)")
             else:
                 st.session_state.search_results = []
                 st.session_state.search_state = 'no_results'
@@ -510,7 +511,9 @@ if st.session_state.current_page == 'home':
     elif st.session_state.search_state == 'searched' and st.session_state.search_results:
         st.markdown("<h2 style='text-align: center; color: #FF4B4B; font-size: 1.5rem;'>Top Matches</h2>", 
                     unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: #666; margin-bottom: 1.2rem; font-size: 0.9rem;'>Here are the songs that match your search!</p>", 
+        num_results = len(st.session_state.search_results)
+        result_text = "result" if num_results == 1 else "results"
+        st.markdown(f"<p style='text-align: center; color: #666; margin-bottom: 1.2rem; font-size: 0.9rem;'>Found {num_results} confident {result_text} for your search!</p>", 
                     unsafe_allow_html=True)
         
         # Auto-scroll to results after rendering
@@ -536,6 +539,19 @@ if st.session_state.current_page == 'home':
                     'score': song_result.get('_score', 0)
                 }
                 song_file = song_result.get('song_file_path_name', '')
+            else:
+                # Handle string fallback case
+                song_data = {
+                    'title': str(song_result),
+                    'composer': 'Unknown',
+                    'genre': '',
+                    'album': '',
+                    'singers': '',
+                    'lyrics': '',
+                    'released_year': '',
+                    'score': 0
+                }
+                song_file = ''
             
             # Build song card HTML with optional fields
             song_card_html = f"""
@@ -543,9 +559,9 @@ if st.session_state.current_page == 'home':
                     <div class="song-title">#{idx} {song_data.get('title', 'Unknown')}</div>
             """
             
-            # Add score if available
+            # Always show the raw Elasticsearch _score
             if song_data.get('score'):
-                song_card_html += f"<div class='song-info'>⭐ Relevance Score: {song_data['score']:.2f}</div>"
+                song_card_html += f"<div class='song-info'>📊 ES Score: {song_data['score']:.4f}</div>"
             
             # Add composer
             song_card_html += f"<div class='song-info'>Composed by {song_data.get('composer', 'Unknown')}</div>"
