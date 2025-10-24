@@ -359,14 +359,16 @@ def create_song_index(index_name: Optional[str] = None) -> bool:
                 "lyrics_vector": {
                     "type": "dense_vector",
                     "dims": CONFIG['embeddings']['text_dims'],
+                    "element_type": "float",
                     "index": True,
-                    "similarity": "cosine"
+                    "similarity": "dot_product"
                 },
                 "audio_vector": {
                     "type": "dense_vector",
                     "dims": CONFIG['embeddings']['audio_dims'],
+                    "element_type": "float",
                     "index": True,
-                    "similarity": "cosine"
+                    "similarity": "dot_product"
                 }
             }
         }
