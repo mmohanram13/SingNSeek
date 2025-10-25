@@ -27,7 +27,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ src/
 COPY .streamlit/ .streamlit/
 COPY images/ images/
-COPY dataset/ dataset/
 
 # Expose Streamlit default port
 EXPOSE 8501
